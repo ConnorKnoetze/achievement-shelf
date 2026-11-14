@@ -6,8 +6,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::achievement::{Achievement, Source};
 
 pub const PER_ROW: usize = 6;
-/// The trophy shelf is a single row.
-pub const MAX_TROPHIES: usize = PER_ROW;
+/// Recent and trophy rows together.
+pub const MAX_LEVELS: usize = 10;
+/// The trophy shelf is always shown; the recent shelf can be hidden.
+pub const MIN_TROPHY_ROWS: usize = 1;
+/// Most trophies kept in settings: every level as a trophy row except the minimum recent (none).
+const MAX_STORED_TROPHIES: usize = MAX_LEVELS * PER_ROW;
 
 /// Identifies one achievement across games and launchers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,19 +48,20 @@ fn string_or_number<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
-    /// Number of shelf rows (1 or 2).
+    /// Rows of recent achievements (0 or more).
     pub rows: usize,
+    /// Rows of the trophy shelf above them (1 or more).
+    pub trophy_rows: usize,
     /// Keep the shelf above other windows instead of on the desktop.
     pub on_top: bool,
-    /// Show the trophy shelf row above the recent achievements.
-    pub trophy_shelf: bool,
-    /// Achievements the user chose for the trophy shelf, in display order.
+    /// Achievements the user chose for the trophy shelf, in display order. Ones past the
+    /// trophy rows' capacity are kept, so removing a row and adding it back restores them.
     pub trophies: Vec<TrophyKey>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { rows: 1, on_top: false, trophy_shelf: true, trophies: Vec::new() }
+        Self { rows: 1, trophy_rows: MIN_TROPHY_ROWS, on_top: false, trophies: Vec::new() }
     }
 }
 
@@ -66,14 +71,51 @@ impl Settings {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        settings.rows = settings.rows.clamp(1, 2);
-        settings.trophies.truncate(MAX_TROPHIES);
+        settings.clamp_rows();
+        settings.trophies.truncate(MAX_STORED_TROPHIES);
         settings
     }
 
-    /// Rows the window must fit: the recent rows plus the trophy row when it is shown.
+    fn clamp_rows(&mut self) {
+        self.trophy_rows = self.trophy_rows.clamp(MIN_TROPHY_ROWS, MAX_LEVELS);
+        self.rows = self.rows.min(MAX_LEVELS - self.trophy_rows);
+    }
+
+    /// Rows the window must fit: recent and trophy rows.
     pub fn total_rows(&self) -> usize {
-        self.rows + usize::from(self.trophy_shelf)
+        self.rows + self.trophy_rows
+    }
+
+    /// How many trophies the trophy rows hold.
+    pub fn trophy_capacity(&self) -> usize {
+        self.trophy_rows * PER_ROW
+    }
+
+    pub fn can_add_row(&self) -> bool {
+        self.total_rows() < MAX_LEVELS
+    }
+
+    pub fn can_remove_recent_row(&self) -> bool {
+        self.rows > 0
+    }
+
+    pub fn can_remove_trophy_row(&self) -> bool {
+        self.trophy_rows > MIN_TROPHY_ROWS
+    }
+
+    /// Adds (`delta` = 1) or removes (`delta` = -1) a recent or trophy row, within the limits.
+    /// Returns whether anything changed.
+    pub fn change_rows(&mut self, trophy: bool, delta: isize) -> bool {
+        let allowed = match (trophy, delta > 0) {
+            (_, true) => self.can_add_row(),
+            (false, false) => self.can_remove_recent_row(),
+            (true, false) => self.can_remove_trophy_row(),
+        };
+        if allowed {
+            let rows = if trophy { &mut self.trophy_rows } else { &mut self.rows };
+            *rows = rows.saturating_add_signed(delta);
+        }
+        allowed
     }
 
     pub fn save(&self, path: &Path) {
@@ -94,12 +136,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn older_settings_get_the_trophy_shelf_on() {
-        let settings: Settings = serde_json::from_str(r#"{ "rows": 2, "onTop": true }"#).unwrap();
+    fn older_settings_get_one_trophy_row() {
+        let settings: Settings =
+            serde_json::from_str(r#"{ "rows": 2, "onTop": true, "trophyShelf": false }"#).unwrap();
         assert_eq!(settings.rows, 2);
-        assert!(settings.trophy_shelf);
+        assert_eq!(settings.trophy_rows, 1);
         assert!(settings.trophies.is_empty());
         assert_eq!(settings.total_rows(), 3);
+        assert_eq!(settings.trophy_capacity(), PER_ROW);
+    }
+
+    #[test]
+    fn loading_clamps_rows_to_the_limits() {
+        let mut settings: Settings = serde_json::from_str(r#"{ "rows": 9, "trophyRows": 0 }"#).unwrap();
+        settings.clamp_rows();
+        assert_eq!((settings.rows, settings.trophy_rows), (9, 1));
+
+        let mut settings: Settings = serde_json::from_str(r#"{ "rows": 9, "trophyRows": 4 }"#).unwrap();
+        settings.clamp_rows();
+        assert_eq!((settings.rows, settings.trophy_rows), (6, 4));
+    }
+
+    #[test]
+    fn rows_change_within_the_limits() {
+        let mut settings = Settings { rows: 0, ..Settings::default() };
+        assert!(!settings.change_rows(false, -1), "recent rows stop at none");
+        assert!(!settings.change_rows(true, -1), "trophy rows stop at one");
+
+        while settings.change_rows(true, 1) {}
+        assert_eq!((settings.rows, settings.trophy_rows), (0, MAX_LEVELS));
+        assert!(!settings.change_rows(false, 1), "levels stop at the maximum");
+
+        assert!(settings.change_rows(true, -1));
+        assert!(settings.change_rows(false, 1));
+        assert_eq!((settings.rows, settings.trophy_rows), (1, MAX_LEVELS - 1));
     }
 
     #[test]

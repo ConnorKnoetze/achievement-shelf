@@ -23,7 +23,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use achievement::{game_key, Achievement, Source};
 use gog::GogPaths;
 use rarity::RarityCache;
-use settings::{Settings, TrophyKey, MAX_TROPHIES, PER_ROW};
+use settings::{Settings, TrophyKey, MAX_LEVELS, PER_ROW};
 use steam::SteamPaths;
 
 // Window layout in logical pixels; must match the sizes in src/shelf.css.
@@ -32,6 +32,9 @@ const ROW_HEIGHT: f64 = 112.0;
 /// Empty space above the shelf where hover cards are drawn.
 const TOOLTIP_SPACE: f64 = 150.0;
 const PICKER_LABEL: &str = "picker";
+const SETTINGS_LABEL: &str = "settings";
+/// Sent with a fresh [`SettingsView`] whenever a setting changes, from the tray or the settings window.
+const SETTINGS_EVENT: &str = "settings-changed";
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 struct HitRect {
@@ -73,10 +76,11 @@ struct ShelfItem {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Shelf {
+    /// Rows of recent achievements (may be none).
     rows: usize,
+    /// Rows of the trophy shelf (at least one, possibly empty).
+    trophy_rows: usize,
     per_row: usize,
-    /// Whether the trophy row is shown (it may still be empty).
-    trophy_shelf: bool,
     trophies: Vec<ShelfItem>,
     items: Vec<ShelfItem>,
 }
@@ -196,18 +200,19 @@ async fn shelf_items(state: &AppState, achievements: Vec<Achievement>) -> Vec<Sh
 
 #[tauri::command]
 async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
-    let (rows, trophy_shelf, trophy_keys) = {
+    let (rows, trophy_rows, trophy_capacity, trophy_keys) = {
         let settings = state.settings.lock().unwrap();
-        (settings.rows, settings.trophy_shelf, settings.trophies.clone())
+        (settings.rows, settings.trophy_rows, settings.trophy_capacity(), settings.trophies.clone())
     };
 
     let Unlocked { achievements: mut recent, names, .. } = load_unlocked().await?;
-    // Trophies keep the order the user chose. Ones no longer found on disk are skipped.
-    let mut trophies: Vec<Achievement> = if trophy_shelf {
-        trophy_keys.iter().filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned()).collect()
-    } else {
-        Vec::new()
-    };
+    // Trophies keep the order the user chose. Ones no longer found on disk are skipped,
+    // and ones past what the trophy rows hold are not shown.
+    let mut trophies: Vec<Achievement> = trophy_keys
+        .iter()
+        .filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned())
+        .take(trophy_capacity)
+        .collect();
     recent.truncate(rows * PER_ROW);
 
     resolve_names(&state, names, &recent.iter().chain(&trophies).collect::<Vec<_>>()).await;
@@ -215,8 +220,8 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
     state.rarity.fill(&state.client, &mut trophies).await;
     Ok(Shelf {
         rows,
+        trophy_rows,
         per_row: PER_ROW,
-        trophy_shelf,
         trophies: shelf_items(&state, trophies).await,
         items: shelf_items(&state, recent).await,
     })
@@ -232,8 +237,11 @@ async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> 
         .into_iter()
         .map(|achievement| PickerItem { game_name: game_name(&state, &achievement), achievement })
         .collect();
-    let trophies = state.settings.lock().unwrap().trophies.clone();
-    Ok(PickerData { launchers, max_trophies: MAX_TROPHIES, trophies, items })
+    let (max_trophies, trophies) = {
+        let settings = state.settings.lock().unwrap();
+        (settings.trophy_capacity(), settings.trophies.clone())
+    };
+    Ok(PickerData { launchers, max_trophies, trophies, items })
 }
 
 #[tauri::command]
@@ -258,8 +266,11 @@ fn set_trophy(
         let mut settings = state.settings.lock().unwrap();
         let present = settings.trophies.contains(&key);
         if trophy && !present {
-            if settings.trophies.len() >= MAX_TROPHIES {
-                return Err(format!("The trophy shelf holds {MAX_TROPHIES} achievements. Remove one first."));
+            let capacity = settings.trophy_capacity();
+            if settings.trophies.len() >= capacity {
+                return Err(format!(
+                    "The trophy shelf holds {capacity} achievements. Remove one, or add a trophy level from the tray menu."
+                ));
             }
             settings.trophies.push(key);
         } else if !trophy && present {
@@ -299,8 +310,10 @@ fn place_window(window: &WebviewWindow, rows: usize) -> tauri::Result<()> {
     };
     let scale = monitor.scale_factor();
     let width = (SHELF_WIDTH * scale).round() as u32;
-    let height = ((TOOLTIP_SPACE + rows as f64 * ROW_HEIGHT) * scale).round() as u32;
     let area = monitor.work_area();
+    // Ten levels can be taller than the screen; the shelf is drawn from the bottom up, so the
+    // top of it (the tooltip space first) is cut off rather than the window leaving the screen.
+    let height = (((TOOLTIP_SPACE + rows as f64 * ROW_HEIGHT) * scale).round() as u32).min(area.size.height);
     window.set_size(PhysicalSize::new(width, height))?;
     window.set_position(PhysicalPosition::new(
         area.position.x + area.size.width as i32 - width as i32,
@@ -343,46 +356,138 @@ fn spawn_hit_test(window: WebviewWindow, hit_rect: Arc<Mutex<Option<HitRect>>>) 
     });
 }
 
-/// Opens the trophy picker, or brings it forward if it is already open.
-fn open_picker(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window(PICKER_LABEL) {
+/// Opens a secondary window, or brings it forward if it is already open.
+fn open_window(app: &AppHandle, label: &str, page: &str, title: &str, size: (f64, f64), min: (f64, f64)) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(label) {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, PICKER_LABEL, WebviewUrl::App("picker.html".into()))
-        .title("Choose trophies")
-        .inner_size(860.0, 640.0)
-        .min_inner_size(520.0, 360.0)
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App(page.into()))
+        .title(title)
+        .inner_size(size.0, size.1)
+        .min_inner_size(min.0, min.1)
         .center()
         .build()?;
     Ok(())
 }
 
+fn open_picker(app: &AppHandle) -> tauri::Result<()> {
+    open_window(app, PICKER_LABEL, "picker.html", "Choose trophies", (860.0, 640.0), (520.0, 360.0))
+}
+
+fn open_settings(app: &AppHandle) -> tauri::Result<()> {
+    open_window(app, SETTINGS_LABEL, "settings.html", "Achievement Shelf settings", (420.0, 450.0), (380.0, 420.0))
+}
+
+/// Tray check items that mirror settings the settings window can also change.
 struct TrayItems {
-    two_rows: CheckMenuItem<tauri::Wry>,
-    trophy_shelf: CheckMenuItem<tauri::Wry>,
     on_top: CheckMenuItem<tauri::Wry>,
     autostart: CheckMenuItem<tauri::Wry>,
 }
 
-fn on_menu_event(app: &AppHandle, event: MenuEvent, tray: &TrayItems) {
+/// What the settings window shows, with the row limits already worked out.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsView {
+    rows: usize,
+    trophy_rows: usize,
+    max_levels: usize,
+    can_add_row: bool,
+    can_remove_recent_row: bool,
+    can_remove_trophy_row: bool,
+    on_top: bool,
+    autostart: bool,
+}
+
+fn settings_view(app: &AppHandle) -> SettingsView {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    SettingsView {
+        rows: settings.rows,
+        trophy_rows: settings.trophy_rows,
+        max_levels: MAX_LEVELS,
+        can_add_row: settings.can_add_row(),
+        can_remove_recent_row: settings.can_remove_recent_row(),
+        can_remove_trophy_row: settings.can_remove_trophy_row(),
+        on_top: settings.on_top,
+        autostart: app.autolaunch().is_enabled().unwrap_or(false),
+    }
+}
+
+/// Brings the tray checks and an open settings window in line with the current settings.
+fn settings_changed(app: &AppHandle) {
+    let view = settings_view(app);
+    if let Some(tray) = app.try_state::<TrayItems>() {
+        let _ = tray.on_top.set_checked(view.on_top);
+        let _ = tray.autostart.set_checked(view.autostart);
+    }
+    let _ = app.emit(SETTINGS_EVENT, view);
+}
+
+/// Adds or removes a recent or trophy row, then resizes the shelf to fit.
+fn change_rows(app: &AppHandle, trophy: bool, add: bool) {
     let state = app.state::<AppState>();
-    let window = app.get_webview_window("main");
+    {
+        let mut settings = state.settings.lock().unwrap();
+        if !settings.change_rows(trophy, if add { 1 } else { -1 }) {
+            return;
+        }
+        settings.save(&state.settings_path);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = place_window(&window, settings.total_rows());
+        }
+    }
+    // Redraws the shelf and updates the picker's trophy capacity.
+    let _ = app.emit(watch::UPDATED_EVENT, ());
+    settings_changed(app);
+}
+
+fn set_on_top(app: &AppHandle, value: bool) {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        settings.on_top = value;
+        settings.save(&state.settings_path);
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = apply_layer(&window, value);
+    }
+    settings_changed(app);
+}
+
+fn set_autostart(app: &AppHandle, value: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    let result = if value { manager.enable() } else { manager.disable() };
+    // Shows the real state either way, so a failed change does not leave a wrong check.
+    settings_changed(app);
+    result.map_err(|e| format!("Could not change Start with Windows: {e}"))
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> SettingsView {
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn change_shelf_rows(app: AppHandle, trophy: bool, add: bool) -> SettingsView {
+    change_rows(&app, trophy, add);
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn set_keep_on_top(app: AppHandle, value: bool) -> SettingsView {
+    set_on_top(&app, value);
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn set_start_with_windows(app: AppHandle, value: bool) -> Result<SettingsView, String> {
+    set_autostart(&app, value)?;
+    Ok(settings_view(&app))
+}
+
+fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         "refresh" => {
-            let _ = app.emit(watch::UPDATED_EVENT, ());
-        }
-        id @ ("two_rows" | "trophy_shelf") => {
-            let mut settings = state.settings.lock().unwrap();
-            if id == "two_rows" {
-                settings.rows = if tray.two_rows.is_checked().unwrap_or(false) { 2 } else { 1 };
-            } else {
-                settings.trophy_shelf = tray.trophy_shelf.is_checked().unwrap_or(false);
-            }
-            settings.save(&state.settings_path);
-            if let Some(window) = &window {
-                let _ = place_window(window, settings.total_rows());
-            }
             let _ = app.emit(watch::UPDATED_EVENT, ());
         }
         "choose_trophies" => {
@@ -390,21 +495,18 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent, tray: &TrayItems) {
                 eprintln!("achievement-shelf: could not open the trophy picker: {e}");
             }
         }
-        "on_top" => {
-            let value = tray.on_top.is_checked().unwrap_or(false);
-            let mut settings = state.settings.lock().unwrap();
-            settings.on_top = value;
-            settings.save(&state.settings_path);
-            if let Some(window) = &window {
-                let _ = apply_layer(window, value);
+        "settings" => {
+            if let Err(e) = open_settings(app) {
+                eprintln!("achievement-shelf: could not open settings: {e}");
             }
         }
-        "autostart" => {
-            let manager = app.autolaunch();
-            let result = if tray.autostart.is_checked().unwrap_or(false) { manager.enable() } else { manager.disable() };
-            if let Err(e) = result {
-                eprintln!("achievement-shelf: could not change autostart: {e}");
-                let _ = tray.autostart.set_checked(manager.is_enabled().unwrap_or(false));
+        // A check item has already toggled itself when the event arrives.
+        id @ ("on_top" | "autostart") => {
+            let Some(tray) = app.try_state::<TrayItems>() else { return };
+            if id == "on_top" {
+                set_on_top(app, tray.on_top.is_checked().unwrap_or(false));
+            } else if let Err(e) = set_autostart(app, tray.autostart.is_checked().unwrap_or(false)) {
+                eprintln!("achievement-shelf: {e}");
             }
         }
         "quit" => app.exit(0),
@@ -414,10 +516,8 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent, tray: &TrayItems) {
 
 fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
     let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
-    let two_rows = CheckMenuItem::with_id(app, "two_rows", "Two rows", true, settings.rows == 2, None::<&str>)?;
-    let trophy_shelf =
-        CheckMenuItem::with_id(app, "trophy_shelf", "Trophy shelf", true, settings.trophy_shelf, None::<&str>)?;
     let choose_trophies = MenuItem::with_id(app, "choose_trophies", "Choose trophies...", true, None::<&str>)?;
+    let open_settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
     let on_top = CheckMenuItem::with_id(app, "on_top", "Keep above other windows", true, settings.on_top, None::<&str>)?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart_enabled, None::<&str>)?;
@@ -427,9 +527,8 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
         &[
             &refresh,
             &PredefinedMenuItem::separator(app)?,
-            &two_rows,
-            &trophy_shelf,
             &choose_trophies,
+            &open_settings,
             &on_top,
             &autostart,
             &PredefinedMenuItem::separator(app)?,
@@ -441,9 +540,8 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
-    let items = TrayItems { two_rows, trophy_shelf, on_top, autostart };
-    tray.on_menu_event(move |app, event| on_menu_event(app, event, &items))
-        .build(app)?;
+    app.manage(TrayItems { on_top, autostart });
+    tray.on_menu_event(on_menu_event).build(app)?;
     Ok(())
 }
 
@@ -573,7 +671,11 @@ pub fn run() {
             get_icon,
             set_trophy,
             clear_trophies,
-            set_hit_rect
+            set_hit_rect,
+            get_settings,
+            change_shelf_rows,
+            set_keep_on_top,
+            set_start_with_windows
         ])
         .run(tauri::generate_context!())
         .expect("error while running Achievement Shelf");

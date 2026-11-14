@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the shelf and trophy picker windows",
-  "windows": ["main", "picker"],
+  "description": "Permissions for the shelf, trophy picker, and settings windows",
+  "windows": ["main", "picker", "settings"],
   "permissions": ["core:default"]
 }

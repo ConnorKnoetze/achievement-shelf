@@ -17,9 +17,11 @@ interface ShelfItem {
 }
 
 interface Shelf {
+  /** Rows of recent achievements; may be 0. */
   rows: number;
+  /** Rows of the trophy shelf; at least 1. */
+  trophyRows: number;
   perRow: number;
-  trophyShelf: boolean;
   trophies: ShelfItem[];
   items: ShelfItem[];
 }
@@ -113,14 +115,15 @@ async function refresh() {
 
   hideTooltip();
   const rows: HTMLElement[] = [];
-  if (shelf.trophyShelf) {
+  for (let r = 0; r < shelf.trophyRows; r++) {
+    const slice = shelf.trophies.slice(r * shelf.perRow, (r + 1) * shelf.perRow);
     rows.push(
-      shelf.trophies.length > 0
-        ? renderRow(shelf.trophies.map((item) => renderItem(item, false)), true)
-        : renderRow("Pick your trophies from the tray menu", true),
+      r === 0 && shelf.trophies.length === 0
+        ? renderRow("Pick your trophies from the tray menu", true)
+        : renderRow(slice.map((item) => renderItem(item, false)), true),
     );
   }
-  if (shelf.items.length === 0) {
+  if (shelf.rows > 0 && shelf.items.length === 0) {
     rows.push(renderRow("No unlocked achievements found yet"));
   } else {
     for (let r = 0; r < shelf.rows; r++) {

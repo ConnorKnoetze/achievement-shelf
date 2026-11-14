@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Achievement Shelf settings</title>
+    <link rel="stylesheet" href="/src/settings.css" />
+  </head>
+  <body>
+    <h1>Settings</h1>
+
+    <section class="group" aria-labelledby="levels-heading">
+      <div class="group-head">
+        <h2 id="levels-heading">Shelf levels</h2>
+        <span id="levels-total" class="total"></span>
+      </div>
+      <div class="setting">
+        <div class="setting-text">
+          <span class="setting-label" id="trophy-label">Trophy levels</span>
+          <span class="setting-hint">Gold shelves for the achievements you pick. At least one.</span>
+        </div>
+        <div class="stepper" role="group" aria-labelledby="trophy-label">
+          <button id="trophy-remove" type="button" aria-label="Remove a trophy level">−</button>
+          <output id="trophy-rows" aria-live="polite"></output>
+          <button id="trophy-add" type="button" aria-label="Add a trophy level">+</button>
+        </div>
+      </div>
+      <div class="setting">
+        <div class="setting-text">
+          <span class="setting-label" id="recent-label">Recent levels</span>
+          <span class="setting-hint">Your newest unlocks. Can be none.</span>
+        </div>
+        <div class="stepper" role="group" aria-labelledby="recent-label">
+          <button id="recent-remove" type="button" aria-label="Remove a recent level">−</button>
+          <output id="recent-rows" aria-live="polite"></output>
+          <button id="recent-add" type="button" aria-label="Add a recent level">+</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="window-heading">
+      <div class="group-head">
+        <h2 id="window-heading">Window</h2>
+      </div>
+      <label class="setting toggle">
+        <span class="setting-text">
+          <span class="setting-label">Keep above other windows</span>
+          <span class="setting-hint">Otherwise the shelf sits on the desktop, behind windows.</span>
+        </span>
+        <input id="on-top" type="checkbox" role="switch" />
+      </label>
+      <label class="setting toggle">
+        <span class="setting-text">
+          <span class="setting-label">Start with Windows</span>
+        </span>
+        <input id="autostart" type="checkbox" role="switch" />
+      </label>
+    </section>
+
+    <p id="status" class="status" role="alert" hidden></p>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>
