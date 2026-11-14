@@ -2,8 +2,14 @@
 //! Usage: `cargo run --bin dump [appid]` (no app ID = the 20 most recent Steam unlocks
 //! across all games), or `cargo run --bin dump -- --gog` for every GOG Galaxy unlock.
 
+use achievement_shelf_lib::achievement::Achievement;
 use achievement_shelf_lib::gog::GogPaths;
 use achievement_shelf_lib::steam::{stats, SteamPaths};
+
+/// Global unlock percentage from local files only (the app fills Steam gaps from the Web API).
+fn rarity(a: &Achievement) -> String {
+    a.rarity.map_or_else(|| "-".to_string(), |r| format!("{r:.1}%"))
+}
 
 fn main() -> Result<(), String> {
     let arg = std::env::args().nth(1);
@@ -14,7 +20,7 @@ fn main() -> Result<(), String> {
         let list = gog.load_all()?;
         for a in &list {
             let game = names.get(&a.game_key()).map_or(a.game_id.as_str(), String::as_str);
-            println!("{game:>24}  {:>10}  {}  —  {}", a.unlocked_at, a.title, a.description);
+            println!("{game:>24}  {:>10}  {:>6}  {}  —  {}", a.unlocked_at, rarity(a), a.title, a.description);
         }
         list
     } else {
@@ -30,7 +36,7 @@ fn main() -> Result<(), String> {
             None => stats::load_all(&paths).into_iter().take(20).collect(),
         };
         for a in &list {
-            println!("{:>8}  {:>10}  {}  —  {}", a.game_id, a.unlocked_at, a.title, a.description);
+            println!("{:>8}  {:>10}  {:>6}  {}  —  {}", a.game_id, a.unlocked_at, rarity(a), a.title, a.description);
         }
         list
     };

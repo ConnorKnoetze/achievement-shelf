@@ -216,3 +216,10 @@ body {
     0 4px 6px rgba(0, 0, 0, 0.5),
     inset 0 1px 1px rgba(255, 255, 255, 0.7);
 }
+
+/* Rarity tiers, coloured like loot. */
+.rarity-common { color: #c9c2b6; }
+.rarity-uncommon { color: #7fd38a; }
+.rarity-rare { color: #6cb4f5; }
+.rarity-epic { color: #c79bff; }
+.rarity-legendary { color: #ffb347; }

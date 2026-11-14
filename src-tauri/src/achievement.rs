@@ -40,6 +40,8 @@ pub struct Achievement {
     /// Steam: icon file name on the community CDN. GOG: full image URL.
     pub icon: String,
     pub unlocked_at: u32,
+    /// Percentage of players who unlocked it, when the launcher knows.
+    pub rarity: Option<f32>,
 }
 
 impl Achievement {

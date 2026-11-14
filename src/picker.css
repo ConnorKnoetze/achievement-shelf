@@ -369,3 +369,10 @@ h1 {
 .card.chosen .card-badge {
   opacity: 1;
 }
+
+/* Rarity tiers, coloured like loot. */
+.rarity-common { color: #c9c2b6; }
+.rarity-uncommon { color: #7fd38a; }
+.rarity-rare { color: #6cb4f5; }
+.rarity-epic { color: #c79bff; }
+.rarity-legendary { color: #ffb347; }

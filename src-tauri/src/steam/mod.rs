@@ -1,6 +1,7 @@
 pub mod kv;
 pub mod names;
 pub mod paths;
+pub mod rarity;
 pub mod schema;
 pub mod stats;
 pub mod vdf;

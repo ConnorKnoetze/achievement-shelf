@@ -3,6 +3,7 @@ pub mod gog;
 pub mod steam;
 
 mod icons;
+mod rarity;
 mod settings;
 mod watch;
 
@@ -21,6 +22,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use achievement::{game_key, Achievement, Source};
 use gog::GogPaths;
+use rarity::RarityCache;
 use settings::{Settings, TrophyKey, MAX_TROPHIES, PER_ROW};
 use steam::SteamPaths;
 
@@ -47,6 +49,8 @@ struct AppState {
     /// Game names known so far, keyed by [`game_key`]: from Steam appmanifests, the GOG
     /// database, the Steam store API, or the disk cache.
     names: Mutex<HashMap<String, String>>,
+    /// Steam rarities fetched from the Web API.
+    rarity: RarityCache,
     /// Shelf area in the window, in logical pixels. Outside it, clicks pass through.
     hit_rect: Arc<Mutex<Option<HitRect>>>,
 }
@@ -199,7 +203,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 
     let Unlocked { achievements: mut recent, names, .. } = load_unlocked().await?;
     // Trophies keep the order the user chose. Ones no longer found on disk are skipped.
-    let trophies: Vec<Achievement> = if trophy_shelf {
+    let mut trophies: Vec<Achievement> = if trophy_shelf {
         trophy_keys.iter().filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned()).collect()
     } else {
         Vec::new()
@@ -207,6 +211,8 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
     recent.truncate(rows * PER_ROW);
 
     resolve_names(&state, names, &recent.iter().chain(&trophies).collect::<Vec<_>>()).await;
+    state.rarity.fill(&state.client, &mut recent).await;
+    state.rarity.fill(&state.client, &mut trophies).await;
     Ok(Shelf {
         rows,
         per_row: PER_ROW,
@@ -219,8 +225,9 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 /// Every unlocked achievement, newest first, for the trophy picker.
 #[tauri::command]
 async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> {
-    let Unlocked { achievements, names, launchers } = load_unlocked().await?;
+    let Unlocked { mut achievements, names, launchers } = load_unlocked().await?;
     resolve_names(&state, names, &achievements.iter().collect::<Vec<_>>()).await;
+    state.rarity.fill(&state.client, &mut achievements).await;
     let items = achievements
         .into_iter()
         .map(|achievement| PickerItem { game_name: game_name(&state, &achievement), achievement })
@@ -531,6 +538,7 @@ pub fn run() {
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok())
                 .unwrap_or_default();
+            let rarity = RarityCache::load(cache_dir.join("rarity.json"));
             let hit_rect = Arc::new(Mutex::new(None));
 
             // Managed before the window is shown so early front-end calls find the state.
@@ -543,6 +551,7 @@ pub fn run() {
                 settings_path,
                 settings: Mutex::new(settings.clone()),
                 names: Mutex::new(names),
+                rarity,
                 hit_rect: hit_rect.clone(),
             });
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");

@@ -88,7 +88,7 @@ fn unlocked(conn: &Connection) -> rusqlite::Result<Vec<Achievement>> {
     // then whatever exists.
     let mut stmt = conn.prepare(
         "SELECT ua.gameReleaseKey, ua.apikey, ua.unlockTime, a.isVisible, a.imageUnlockedUrl,
-                la.name, la.description
+                la.name, la.description, a.rarity
          FROM UserAchievements ua
          JOIN Achievements a ON a.gameReleaseKey = ua.gameReleaseKey AND a.apikey = ua.apikey
          LEFT JOIN LocalizedAchievements la ON la.rowid = (
@@ -115,6 +115,7 @@ fn unlocked(conn: &Connection) -> rusqlite::Result<Vec<Achievement>> {
             hidden: !row.get::<_, bool>(3)?,
             icon: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             unlocked_at: unlock_time.as_deref().and_then(parse_unlock_time).unwrap_or(0),
+            rarity: row.get::<_, Option<f64>>(7)?.map(|r| r as f32),
         })
     })?;
     rows.collect()
@@ -233,6 +234,7 @@ mod tests {
         assert!(!fool.hidden);
         assert_eq!(fool.icon, "https://images.gog.com/abc_gac_60.jpg");
         assert_eq!(fool.unlocked_at, 1_659_832_047);
+        assert_eq!(fool.rarity, Some(93.9));
     }
 
     #[test]

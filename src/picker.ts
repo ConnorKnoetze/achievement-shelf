@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { rarityLabel } from "./rarity";
 
 type Source = "steam" | "gog";
 
@@ -11,6 +12,7 @@ interface PickerItem {
   description: string;
   icon: string;
   unlockedAt: number;
+  rarity: number | null;
   gameName: string;
 }
 
@@ -168,11 +170,14 @@ function renderCard(item: PickerItem): HTMLButtonElement {
   img.dataset.icon = item.icon;
   iconObserver.observe(img);
 
+  const date = el("div", "card-date", formatDate(item.unlockedAt));
+  const rarity = rarityLabel(item.rarity);
+  if (rarity) date.append(" · ", rarity);
   const text = el("div", "card-text");
   text.append(
     el("div", "card-title", item.title || item.apiName),
     el("div", "card-desc", item.description || "No description"),
-    el("div", "card-date", formatDate(item.unlockedAt)),
+    date,
   );
   card.append(img, text, el("span", "card-badge", "★"));
   card.addEventListener("click", () => void toggle(item));

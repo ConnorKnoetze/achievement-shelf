@@ -19,6 +19,16 @@ impl SteamPaths {
         self.root.join("appcache").join("stats")
     }
 
+    /// The client's library page cache for one game, which includes some achievement rarities.
+    pub fn library_cache_path(&self, app_id: u32) -> PathBuf {
+        self.root
+            .join("userdata")
+            .join(self.account_id.to_string())
+            .join("config")
+            .join("librarycache")
+            .join(format!("{app_id}.json"))
+    }
+
     pub fn locate() -> Result<Self, String> {
         let root = steam_root().ok_or("Steam installation not found")?;
         let account_id = account_id(&root).ok_or("No Steam account with achievement stats found")?;

@@ -6,6 +6,7 @@ use std::path::Path;
 
 use super::kv::{self, Kv};
 use super::paths::SteamPaths;
+use super::rarity::local_percents;
 use super::schema::parse_schema;
 use crate::achievement::{Achievement, Source};
 
@@ -47,6 +48,7 @@ pub fn load_game(paths: &SteamPaths, app_id: u32) -> Result<Vec<Achievement>, St
     let user = read_kv(&stats_dir.join(format!("UserGameStats_{}_{app_id}.bin", paths.account_id)))?;
     let schema = read_kv(&stats_dir.join(format!("UserGameStatsSchema_{app_id}.bin")))?;
     let unlocks = parse_user_stats(&user);
+    let percents = local_percents(paths, app_id);
     Ok(parse_schema(&schema)
         .into_iter()
         .filter_map(|def| {
@@ -54,6 +56,7 @@ pub fn load_game(paths: &SteamPaths, app_id: u32) -> Result<Vec<Achievement>, St
             Some(Achievement {
                 source: Source::Steam,
                 game_id: app_id.to_string(),
+                rarity: percents.get(&def.api_name).copied(),
                 api_name: def.api_name,
                 title: def.title,
                 description: def.description,

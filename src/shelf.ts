@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { rarityLabel } from "./rarity";
 
 interface ShelfItem {
   source: "steam" | "gog";
@@ -10,6 +11,7 @@ interface ShelfItem {
   hidden: boolean;
   icon: string;
   unlockedAt: number;
+  rarity: number | null;
   gameName: string;
   iconUrl: string | null;
 }
@@ -42,11 +44,14 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 }
 
 function showTooltip(item: ShelfItem, anchor: HTMLElement) {
+  const date = el("div", "tooltip-date", formatDate(item.unlockedAt));
+  const rarity = rarityLabel(item.rarity);
+  if (rarity) date.append(" · ", rarity);
   tooltipEl.replaceChildren(
     el("div", "tooltip-game", item.gameName),
     el("div", "tooltip-title", item.title || item.apiName),
     el("div", "tooltip-desc", item.description || "No description"),
-    el("div", "tooltip-date", formatDate(item.unlockedAt)),
+    date,
   );
   tooltipEl.hidden = false;
 
