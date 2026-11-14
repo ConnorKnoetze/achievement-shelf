@@ -1,0 +1,196 @@
+/* Sizes here must match SHELF_WIDTH / ROW_HEIGHT in src-tauri/src/lib.rs. */
+:root {
+  --row-height: 112px;
+  --plank-height: 22px;
+  --item-size: 60px;
+  --wood-light: #b77a45;
+  --wood-mid: #94592c;
+  --wood-dark: #5e3417;
+  --wood-edge: #47250f;
+  --card-bg: rgba(24, 18, 14, 0.94);
+  --card-text: #f4ead8;
+  --card-muted: #c7b498;
+  --card-accent: #e8b84a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+}
+
+.shelves {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  padding: 0 14px;
+}
+
+.row {
+  height: var(--row-height);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.row-items {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0 18px;
+  height: calc(var(--row-height) - var(--plank-height) - 14px);
+}
+
+.row-items.message {
+  align-items: center;
+  color: var(--card-text);
+  font-size: 13px;
+  text-shadow: 0 1px 3px #000;
+}
+
+/* The wooden plank: top surface, front edge with grain, and two brackets underneath. */
+.plank {
+  position: relative;
+  height: var(--plank-height);
+  border-radius: 3px;
+  background:
+    repeating-linear-gradient(
+      92deg,
+      rgba(0, 0, 0, 0) 0 22px,
+      rgba(60, 30, 10, 0.18) 22px 24px,
+      rgba(0, 0, 0, 0) 24px 61px,
+      rgba(255, 220, 170, 0.08) 61px 63px
+    ),
+    linear-gradient(to bottom, var(--wood-light) 0 7px, var(--wood-mid) 7px 18px, var(--wood-dark) 18px);
+  box-shadow:
+    0 6px 10px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 230, 190, 0.35);
+  margin-bottom: 14px;
+}
+
+.plank::before,
+.plank::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  width: 12px;
+  height: 14px;
+  background: linear-gradient(to right, var(--wood-dark), var(--wood-edge));
+  clip-path: polygon(0 0, 100% 0, 100% 15%, 15% 100%, 0 100%);
+}
+
+.plank::before {
+  left: 48px;
+}
+
+.plank::after {
+  right: 48px;
+  transform: scaleX(-1);
+}
+
+/* Each achievement sits on the shelf like a small framed plaque. */
+.item {
+  width: var(--item-size);
+  height: var(--item-size);
+  padding: 4px;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #e3c27a, #9a7330 60%, #6b4c1c);
+  box-shadow:
+    0 4px 6px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  transform-origin: bottom center;
+  transition: transform 0.15s ease;
+  cursor: default;
+}
+
+.item:hover {
+  transform: translateY(-4px) scale(1.06);
+}
+
+.item img,
+.item-fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.item-fallback {
+  display: grid;
+  place-items: center;
+  background: #2a1a10;
+  font-size: 26px;
+}
+
+.item.new {
+  animation: drop-in 0.7s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+
+@keyframes drop-in {
+  from {
+    transform: translateY(-120px);
+    opacity: 0;
+  }
+  70% {
+    transform: translateY(0) scaleY(0.9);
+    opacity: 1;
+  }
+  to {
+    transform: none;
+  }
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 10;
+  max-width: 260px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(232, 184, 74, 0.35);
+  background: var(--card-bg);
+  color: var(--card-text);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tooltip[hidden] {
+  display: none;
+}
+
+.tooltip-game {
+  color: var(--card-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tooltip-title {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tooltip-desc {
+  margin-top: 3px;
+  color: var(--card-muted);
+}
+
+.tooltip-date {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--card-muted);
+}
