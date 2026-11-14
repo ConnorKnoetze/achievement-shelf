@@ -1,3 +1,5 @@
+pub mod achievement;
+pub mod gog;
 pub mod steam;
 
 mod icons;
@@ -5,7 +7,7 @@ mod settings;
 mod watch;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,8 +19,10 @@ use tauri::{
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
+use achievement::{game_key, Achievement, Source};
+use gog::GogPaths;
 use settings::{Settings, TrophyKey, MAX_TROPHIES, PER_ROW};
-use steam::{Achievement, SteamPaths};
+use steam::SteamPaths;
 
 // Window layout in logical pixels; must match the sizes in src/shelf.css.
 const SHELF_WIDTH: f64 = 520.0;
@@ -40,8 +44,9 @@ struct AppState {
     cache_dir: PathBuf,
     settings_path: PathBuf,
     settings: Mutex<Settings>,
-    /// Game names known so far (from appmanifests, the store API, or the disk cache).
-    names: Mutex<HashMap<u32, String>>,
+    /// Game names known so far, keyed by [`game_key`]: from Steam appmanifests, the GOG
+    /// database, the Steam store API, or the disk cache.
+    names: Mutex<HashMap<String, String>>,
     /// Shelf area in the window, in logical pixels. Outside it, clicks pass through.
     hit_rect: Arc<Mutex<Option<HitRect>>>,
 }
@@ -84,39 +89,72 @@ struct PickerItem {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PickerData {
+    /// Launchers found on this PC, so the picker can tell "not installed" from "nothing unlocked".
+    launchers: Vec<Source>,
     max_trophies: usize,
     trophies: Vec<TrophyKey>,
     items: Vec<PickerItem>,
 }
 
-fn is_key(achievement: &Achievement, key: &TrophyKey) -> bool {
-    achievement.app_id == key.app_id && achievement.api_name == key.api_name
+struct Unlocked {
+    /// Every launcher's unlocked achievements, newest first.
+    achievements: Vec<Achievement>,
+    /// Game names the launchers know locally, keyed by [`game_key`].
+    names: HashMap<String, String>,
+    launchers: Vec<Source>,
 }
 
-/// All unlocked achievements (newest first) plus the names of installed games.
-async fn load_unlocked() -> Result<(Vec<Achievement>, HashMap<u32, String>), String> {
+/// Reads every launcher that is installed. Fails only when none is.
+async fn load_unlocked() -> Result<Unlocked, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let paths = SteamPaths::locate()?;
-        Ok((steam::stats::load_all(&paths), steam::names::installed_names(&paths)))
+        let mut unlocked = Unlocked { achievements: Vec::new(), names: HashMap::new(), launchers: Vec::new() };
+        if let Ok(paths) = SteamPaths::locate() {
+            unlocked.launchers.push(Source::Steam);
+            unlocked.achievements.extend(steam::stats::load_all(&paths));
+            let names = steam::names::installed_names(&paths);
+            unlocked.names.extend(names.into_iter().map(|(id, name)| (game_key(Source::Steam, &id.to_string()), name)));
+        }
+        if let Ok(gog) = GogPaths::locate() {
+            unlocked.launchers.push(Source::Gog);
+            match gog.load_all() {
+                Ok(list) => unlocked.achievements.extend(list),
+                Err(e) => eprintln!("achievement-shelf: cannot read GOG achievements: {e}"),
+            }
+            match gog.names() {
+                Ok(names) => unlocked.names.extend(names),
+                Err(e) => eprintln!("achievement-shelf: cannot read GOG game names: {e}"),
+            }
+        }
+        if unlocked.launchers.is_empty() {
+            return Err("No Steam or GOG Galaxy installation found".to_string());
+        }
+        unlocked.achievements.sort_by(|a, b| b.unlocked_at.cmp(&a.unlocked_at));
+        Ok(unlocked)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// Makes sure every game in `achievements` has a name, asking the store only for games
-/// we have never seen, and saves new names to the disk cache.
-async fn resolve_names(state: &AppState, installed: HashMap<u32, String>, achievements: &[&Achievement]) {
-    state.names.lock().unwrap().extend(installed);
+/// Makes sure every game in `achievements` has a name, asking the Steam store only for
+/// Steam games we have never seen, and saves new names to the disk cache. GOG names all
+/// come from its local database.
+async fn resolve_names(state: &AppState, local: HashMap<String, String>, achievements: &[&Achievement]) {
+    state.names.lock().unwrap().extend(local);
     let mut fetched_any = false;
-    let mut app_ids: Vec<u32> = achievements.iter().map(|a| a.app_id).collect();
+    let mut app_ids: Vec<u32> = achievements
+        .iter()
+        .filter(|a| a.source == Source::Steam)
+        .filter_map(|a| a.game_id.parse().ok())
+        .collect();
     app_ids.sort_unstable();
     app_ids.dedup();
     for app_id in app_ids {
-        if state.names.lock().unwrap().contains_key(&app_id) {
+        let key = game_key(Source::Steam, &app_id.to_string());
+        if state.names.lock().unwrap().contains_key(&key) {
             continue;
         }
         if let Some(name) = steam::names::fetch_store_name(&state.client, app_id).await {
-            state.names.lock().unwrap().insert(app_id, name);
+            state.names.lock().unwrap().insert(key, name);
             fetched_any = true;
         }
     }
@@ -127,16 +165,26 @@ async fn resolve_names(state: &AppState, installed: HashMap<u32, String>, achiev
     }
 }
 
-fn game_name(state: &AppState, app_id: u32) -> String {
-    state.names.lock().unwrap().get(&app_id).cloned().unwrap_or_else(|| format!("App {app_id}"))
+fn game_name(state: &AppState, achievement: &Achievement) -> String {
+    let known = state.names.lock().unwrap().get(&achievement.game_key()).cloned();
+    known.unwrap_or_else(|| match achievement.source {
+        Source::Steam => format!("App {}", achievement.game_id),
+        Source::Gog => format!("GOG game {}", achievement.game_id),
+    })
 }
 
 async fn shelf_items(state: &AppState, achievements: Vec<Achievement>) -> Vec<ShelfItem> {
     let mut items = Vec::with_capacity(achievements.len());
     for achievement in achievements {
-        let icon_url =
-            icons::icon_data_url(&state.client, &state.cache_dir, achievement.app_id, &achievement.icon).await;
-        let game_name = game_name(state, achievement.app_id);
+        let icon_url = icons::icon_data_url(
+            &state.client,
+            &state.cache_dir,
+            achievement.source,
+            &achievement.game_id,
+            &achievement.icon,
+        )
+        .await;
+        let game_name = game_name(state, &achievement);
         items.push(ShelfItem { achievement, game_name, icon_url });
     }
     items
@@ -149,16 +197,16 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         (settings.rows, settings.trophy_shelf, settings.trophies.clone())
     };
 
-    let (mut recent, installed) = load_unlocked().await?;
+    let Unlocked { achievements: mut recent, names, .. } = load_unlocked().await?;
     // Trophies keep the order the user chose. Ones no longer found on disk are skipped.
     let trophies: Vec<Achievement> = if trophy_shelf {
-        trophy_keys.iter().filter_map(|key| recent.iter().find(|a| is_key(a, key)).cloned()).collect()
+        trophy_keys.iter().filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned()).collect()
     } else {
         Vec::new()
     };
     recent.truncate(rows * PER_ROW);
 
-    resolve_names(&state, installed, &recent.iter().chain(&trophies).collect::<Vec<_>>()).await;
+    resolve_names(&state, names, &recent.iter().chain(&trophies).collect::<Vec<_>>()).await;
     Ok(Shelf {
         rows,
         per_row: PER_ROW,
@@ -171,19 +219,24 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 /// Every unlocked achievement, newest first, for the trophy picker.
 #[tauri::command]
 async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> {
-    let (all, installed) = load_unlocked().await?;
-    resolve_names(&state, installed, &all.iter().collect::<Vec<_>>()).await;
-    let items = all
+    let Unlocked { achievements, names, launchers } = load_unlocked().await?;
+    resolve_names(&state, names, &achievements.iter().collect::<Vec<_>>()).await;
+    let items = achievements
         .into_iter()
-        .map(|achievement| PickerItem { game_name: game_name(&state, achievement.app_id), achievement })
+        .map(|achievement| PickerItem { game_name: game_name(&state, &achievement), achievement })
         .collect();
     let trophies = state.settings.lock().unwrap().trophies.clone();
-    Ok(PickerData { max_trophies: MAX_TROPHIES, trophies, items })
+    Ok(PickerData { launchers, max_trophies: MAX_TROPHIES, trophies, items })
 }
 
 #[tauri::command]
-async fn get_icon(state: State<'_, AppState>, app_id: u32, icon: String) -> Result<Option<String>, String> {
-    Ok(icons::icon_data_url(&state.client, &state.cache_dir, app_id, &icon).await)
+async fn get_icon(
+    state: State<'_, AppState>,
+    source: Source,
+    game_id: String,
+    icon: String,
+) -> Result<Option<String>, String> {
+    Ok(icons::icon_data_url(&state.client, &state.cache_dir, source, &game_id, &icon).await)
 }
 
 /// Adds or removes a trophy and returns the new list. Fails when the shelf is already full.
@@ -327,7 +380,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent, tray: &TrayItems) {
         }
         "choose_trophies" => {
             if let Err(e) = open_picker(app) {
-                eprintln!("steam-shelf: could not open the trophy picker: {e}");
+                eprintln!("achievement-shelf: could not open the trophy picker: {e}");
             }
         }
         "on_top" => {
@@ -343,7 +396,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent, tray: &TrayItems) {
             let manager = app.autolaunch();
             let result = if tray.autostart.is_checked().unwrap_or(false) { manager.enable() } else { manager.disable() };
             if let Err(e) = result {
-                eprintln!("steam-shelf: could not change autostart: {e}");
+                eprintln!("achievement-shelf: could not change autostart: {e}");
                 let _ = tray.autostart.set_checked(manager.is_enabled().unwrap_or(false));
             }
         }
@@ -377,7 +430,7 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
         ],
     )?;
 
-    let mut tray = TrayIconBuilder::with_id("main").tooltip("Steam Shelf").menu(&menu);
+    let mut tray = TrayIconBuilder::with_id("main").tooltip("Achievement Shelf").menu(&menu);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -387,14 +440,94 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Folders to watch for new unlocks, one per installed launcher.
+fn watch_targets() -> Vec<watch::Target> {
+    let mut targets = Vec::new();
+    match SteamPaths::locate() {
+        Ok(paths) => targets.push(watch::Target {
+            dir: paths.stats_dir(),
+            relevant: |name| name.starts_with("UserGameStats_"),
+            changed: Box::new(|| true),
+        }),
+        Err(e) => eprintln!("achievement-shelf: {e}"),
+    }
+    match GogPaths::locate() {
+        Ok(gog) => {
+            let mut last = gog.fingerprint();
+            targets.push(watch::Target {
+                dir: gog.storage_dir(),
+                // Galaxy writes to the `-wal` file first, then folds it into the database.
+                relevant: |name| name.starts_with(gog::DB_FILE_NAME),
+                changed: Box::new(move || {
+                    let now = gog.fingerprint();
+                    now != std::mem::replace(&mut last, now.clone())
+                }),
+            });
+        }
+        Err(e) => eprintln!("achievement-shelf: {e}"),
+    }
+    targets
+}
+
+/// The app was called Steam Shelf before, with this identifier for its config folder.
+const OLD_IDENTIFIER: &str = "dev.steamshelf.app";
+const OLD_PRODUCT_NAME: &str = "Steam Shelf";
+
+/// Copies settings from the old config folder on the first run after the rename.
+fn migrate_old_settings(settings_path: &Path) {
+    if settings_path.exists() {
+        return;
+    }
+    let Some(old) =
+        settings_path.parent().and_then(Path::parent).map(|dir| dir.join(OLD_IDENTIFIER).join("settings.json"))
+    else {
+        return;
+    };
+    if !old.is_file() {
+        return;
+    }
+    if let Some(parent) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::copy(&old, settings_path) {
+        eprintln!("achievement-shelf: could not copy settings from {}: {e}", old.display());
+    }
+}
+
+/// Autostart is registered under the product name. Moves an entry left by the old name.
+#[cfg(windows)]
+fn migrate_old_autostart(app: &AppHandle) {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE};
+    const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(run) = hkcu.open_subkey_with_flags(RUN, KEY_QUERY_VALUE | KEY_SET_VALUE) else {
+        return;
+    };
+    if run.get_raw_value(OLD_PRODUCT_NAME).is_err() {
+        return;
+    }
+    let _ = run.delete_value(OLD_PRODUCT_NAME);
+    if let Ok(approved) = hkcu.open_subkey_with_flags(APPROVED, KEY_SET_VALUE) {
+        let _ = approved.delete_value(OLD_PRODUCT_NAME);
+    }
+    if let Err(e) = app.autolaunch().enable() {
+        eprintln!("achievement-shelf: could not move autostart to the new name: {e}");
+    }
+}
+
+#[cfg(not(windows))]
+fn migrate_old_autostart(_app: &AppHandle) {}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
             let settings_path = app.path().app_config_dir()?.join("settings.json");
+            migrate_old_settings(&settings_path);
             let settings = Settings::load(&settings_path);
-            let names: HashMap<u32, String> = std::fs::read_to_string(cache_dir.join("names.json"))
+            let names: HashMap<String, String> = std::fs::read_to_string(cache_dir.join("names.json"))
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok())
                 .unwrap_or_default();
@@ -403,7 +536,7 @@ pub fn run() {
             // Managed before the window is shown so early front-end calls find the state.
             app.manage(AppState {
                 client: reqwest::Client::builder()
-                    .user_agent("steam-shelf/0.1")
+                    .user_agent("achievement-shelf/0.1")
                     .timeout(Duration::from_secs(10))
                     .build()?,
                 cache_dir,
@@ -419,11 +552,9 @@ pub fn run() {
             window.show()?;
             spawn_hit_test(window, hit_rect.clone());
 
+            migrate_old_autostart(app.handle());
             build_tray(app.handle(), &settings)?;
-            match SteamPaths::locate() {
-                Ok(paths) => watch::spawn(app.handle().clone(), paths.stats_dir()),
-                Err(e) => eprintln!("steam-shelf: {e}"),
-            }
+            watch::spawn(app.handle().clone(), watch_targets());
 
             Ok(())
         })
@@ -436,5 +567,5 @@ pub fn run() {
             set_hit_rect
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Steam Shelf");
+        .expect("error while running Achievement Shelf");
 }

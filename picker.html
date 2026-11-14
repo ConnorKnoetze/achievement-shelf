@@ -17,12 +17,13 @@
     </header>
     <p class="hint">Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.</p>
     <p id="status" class="status" hidden></p>
+    <div id="tabs" class="tabs" role="tablist" aria-label="Launcher"></div>
     <div class="content">
       <aside class="sidebar" aria-label="Games">
         <input id="game-filter" class="game-filter" type="search" placeholder="Filter games" autocomplete="off" />
         <nav id="games" class="games"></nav>
       </aside>
-      <main id="list" class="list"></main>
+      <main id="list" class="list" role="tabpanel"></main>
     </div>
     <script type="module" src="/src/picker.ts"></script>
   </body>

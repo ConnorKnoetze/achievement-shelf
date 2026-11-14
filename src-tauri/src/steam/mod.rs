@@ -6,4 +6,3 @@ pub mod stats;
 pub mod vdf;
 
 pub use paths::SteamPaths;
-pub use stats::Achievement;

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Steam Shelf",
+  "productName": "Achievement Shelf",
   "version": "0.1.0",
-  "identifier": "dev.steamshelf.app",
+  "identifier": "dev.achievementshelf.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Steam Shelf",
+        "title": "Achievement Shelf",
         "width": 520,
         "height": 250,
         "transparent": true,

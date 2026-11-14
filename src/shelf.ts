@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 interface ShelfItem {
-  appId: number;
+  source: "steam" | "gog";
+  gameId: string;
   apiName: string;
   title: string;
   description: string;
@@ -26,7 +27,7 @@ const tooltipEl = document.getElementById("tooltip") as HTMLDivElement;
 
 let knownKeys: Set<string> | null = null;
 
-const keyOf = (item: ShelfItem) => `${item.appId}:${item.apiName}`;
+const keyOf = (item: ShelfItem) => `${item.source}:${item.gameId}:${item.apiName}`;
 
 function formatDate(unix: number): string {
   if (!unix) return "Unlocked";

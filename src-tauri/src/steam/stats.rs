@@ -4,11 +4,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use serde::Serialize;
-
 use super::kv::{self, Kv};
 use super::paths::SteamPaths;
 use super::schema::parse_schema;
+use crate::achievement::{Achievement, Source};
 
 /// `(stat_id, bit) -> unlock unix time` (0 when Steam recorded no time).
 pub type Unlocks = HashMap<(u32, u32), u32>;
@@ -37,18 +36,6 @@ pub fn parse_user_stats(root: &Kv) -> Unlocks {
     unlocks
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Achievement {
-    pub app_id: u32,
-    pub api_name: String,
-    pub title: String,
-    pub description: String,
-    pub hidden: bool,
-    pub icon: String,
-    pub unlocked_at: u32,
-}
-
 fn read_kv(path: &Path) -> Result<Kv, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     kv::parse(&bytes)
@@ -65,7 +52,8 @@ pub fn load_game(paths: &SteamPaths, app_id: u32) -> Result<Vec<Achievement>, St
         .filter_map(|def| {
             let time = *unlocks.get(&(def.stat_id, def.bit))?;
             Some(Achievement {
-                app_id,
+                source: Source::Steam,
+                game_id: app_id.to_string(),
                 api_name: def.api_name,
                 title: def.title,
                 description: def.description,
@@ -96,7 +84,7 @@ pub fn load_all(paths: &SteamPaths) -> Vec<Achievement> {
         .into_iter()
         .flat_map(|app_id| {
             load_game(paths, app_id).unwrap_or_else(|e| {
-                eprintln!("steam-shelf: skipping app {app_id}: {e}");
+                eprintln!("achievement-shelf: skipping app {app_id}: {e}");
                 Vec::new()
             })
         })
