@@ -16,6 +16,8 @@ interface ShelfItem {
 interface Shelf {
   rows: number;
   perRow: number;
+  trophyShelf: boolean;
+  trophies: ShelfItem[];
   items: ShelfItem[];
 }
 
@@ -74,10 +76,17 @@ function renderItem(item: ShelfItem, isNew: boolean): HTMLElement {
   return plaque;
 }
 
+function renderRow(content: HTMLElement[] | string, trophy = false): HTMLElement {
+  const row = el("div", trophy ? "row trophy" : "row");
+  const items = el("div", typeof content === "string" ? "row-items message" : "row-items");
+  if (typeof content === "string") items.textContent = content;
+  else items.append(...content);
+  row.append(items, el("div", "plank"));
+  return row;
+}
+
 function renderMessage(text: string) {
-  const row = el("div", "row");
-  row.append(el("div", "row-items message", text), el("div", "plank"));
-  shelvesEl.replaceChildren(row);
+  shelvesEl.replaceChildren(renderRow(text));
 }
 
 /** Tells the backend where the shelf is, so clicks elsewhere pass through to the desktop. */
@@ -97,20 +106,23 @@ async function refresh() {
   }
 
   hideTooltip();
+  const rows: HTMLElement[] = [];
+  if (shelf.trophyShelf) {
+    rows.push(
+      shelf.trophies.length > 0
+        ? renderRow(shelf.trophies.map((item) => renderItem(item, false)), true)
+        : renderRow("Pick your trophies from the tray menu", true),
+    );
+  }
   if (shelf.items.length === 0) {
-    renderMessage("No unlocked achievements found yet");
+    rows.push(renderRow("No unlocked achievements found yet"));
   } else {
-    const rows: HTMLElement[] = [];
     for (let r = 0; r < shelf.rows; r++) {
       const slice = shelf.items.slice(r * shelf.perRow, (r + 1) * shelf.perRow);
-      const row = el("div", "row");
-      const items = el("div", "row-items");
-      for (const item of slice) items.append(renderItem(item, knownKeys !== null && !knownKeys.has(keyOf(item))));
-      row.append(items, el("div", "plank"));
-      rows.push(row);
+      rows.push(renderRow(slice.map((item) => renderItem(item, knownKeys !== null && !knownKeys.has(keyOf(item))))));
     }
-    shelvesEl.replaceChildren(...rows);
   }
+  shelvesEl.replaceChildren(...rows);
   knownKeys = new Set(shelf.items.map(keyOf));
   requestAnimationFrame(reportHitRect);
 }

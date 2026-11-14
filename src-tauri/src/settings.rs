@@ -4,6 +4,16 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 pub const PER_ROW: usize = 6;
+/// The trophy shelf is a single row.
+pub const MAX_TROPHIES: usize = PER_ROW;
+
+/// Identifies one achievement across games.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrophyKey {
+    pub app_id: u32,
+    pub api_name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -12,11 +22,15 @@ pub struct Settings {
     pub rows: usize,
     /// Keep the shelf above other windows instead of on the desktop.
     pub on_top: bool,
+    /// Show the trophy shelf row above the recent achievements.
+    pub trophy_shelf: bool,
+    /// Achievements the user chose for the trophy shelf, in display order.
+    pub trophies: Vec<TrophyKey>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { rows: 1, on_top: false }
+        Self { rows: 1, on_top: false, trophy_shelf: true, trophies: Vec::new() }
     }
 }
 
@@ -27,7 +41,13 @@ impl Settings {
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
         settings.rows = settings.rows.clamp(1, 2);
+        settings.trophies.truncate(MAX_TROPHIES);
         settings
+    }
+
+    /// Rows the window must fit: the recent rows plus the trophy row when it is shown.
+    pub fn total_rows(&self) -> usize {
+        self.rows + usize::from(self.trophy_shelf)
     }
 
     pub fn save(&self, path: &Path) {
@@ -40,5 +60,19 @@ impl Settings {
         if let Err(e) = result {
             eprintln!("steam-shelf: could not save settings: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_settings_get_the_trophy_shelf_on() {
+        let settings: Settings = serde_json::from_str(r#"{ "rows": 2, "onTop": true }"#).unwrap();
+        assert_eq!(settings.rows, 2);
+        assert!(settings.trophy_shelf);
+        assert!(settings.trophies.is_empty());
+        assert_eq!(settings.total_rows(), 3);
     }
 }

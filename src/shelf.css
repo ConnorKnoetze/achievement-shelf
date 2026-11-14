@@ -194,3 +194,25 @@ body {
   font-size: 11px;
   color: var(--card-muted);
 }
+
+/* The trophy shelf: a darker plank with a brass trim, and plaques that glow. */
+.row.trophy .plank {
+  background:
+    linear-gradient(to bottom, #f3d27a 0 2px, rgba(0, 0, 0, 0) 2px),
+    repeating-linear-gradient(
+      92deg,
+      rgba(0, 0, 0, 0) 0 22px,
+      rgba(20, 8, 2, 0.25) 22px 24px,
+      rgba(0, 0, 0, 0) 24px 61px,
+      rgba(255, 220, 170, 0.06) 61px 63px
+    ),
+    linear-gradient(to bottom, #6e3f1f 0 7px, #55301a 7px 18px, #3a1f0e 18px);
+}
+
+.row.trophy .item {
+  background: linear-gradient(145deg, #fff0b8, #e0a92e 55%, #8c5d12);
+  box-shadow:
+    0 0 12px rgba(255, 200, 80, 0.55),
+    0 4px 6px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.7);
+}
