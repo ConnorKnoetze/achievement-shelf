@@ -55,6 +55,12 @@ impl GogPaths {
         names(&self.open()?).map_err(|e| e.to_string())
     }
 
+    /// Store banner URL templates (`horizontalCover`) of games with unlocked achievements,
+    /// keyed by [`game_key`]. See `icons::banner_data_url` for how they are filled in.
+    pub fn banners(&self) -> Result<HashMap<String, String>, String> {
+        banners(&self.open()?).map_err(|e| e.to_string())
+    }
+
     /// Changes whenever an achievement is unlocked. Galaxy writes to the database for many
     /// other reasons, so the watcher compares this instead of reacting to every write.
     pub fn fingerprint(&self) -> Option<String> {
@@ -144,6 +150,27 @@ fn names(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
     Ok(names)
 }
 
+fn banners(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
+    let mut stmt = conn.prepare(
+        "SELECT gp.releaseKey, gp.value FROM GamePieces gp
+         JOIN GamePieceTypes t ON t.id = gp.gamePieceTypeId
+         WHERE t.type = 'storeImages'
+           AND gp.releaseKey IN (SELECT gameReleaseKey FROM UserAchievements WHERE isUnlocked = 1)",
+    )?;
+    let mut banners = HashMap::new();
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    for row in rows {
+        let (key, value) = row?;
+        let cover = serde_json::from_str::<serde_json::Value>(&value)
+            .ok()
+            .and_then(|v| v.get("horizontalCover")?.as_str().map(str::to_string));
+        if let Some(cover) = cover {
+            banners.insert(game_key(Source::Gog, &key), cover);
+        }
+    }
+    Ok(banners)
+}
+
 /// Parses Galaxy's `YYYY-MM-DD HH:MM:SS` (UTC) into unix seconds.
 fn parse_unlock_time(text: &str) -> Option<u32> {
     let (date, time) = text.trim().split_once([' ', 'T'])?;
@@ -207,11 +234,13 @@ mod tests {
                  ('gog_1', 55, 'Secret', NULL, 1),
                  ('gog_1', 55, 'Locked', NULL, 0);
 
-             INSERT INTO GamePieceTypes(id, type) VALUES (1, 'originalTitle'), (2, 'title');
+             INSERT INTO GamePieceTypes(id, type) VALUES (1, 'originalTitle'), (2, 'title'), (3, 'storeImages');
              INSERT INTO GamePieces VALUES
                  ('gog_1', 1, NULL, '{\"title\":\"Cyberpunk 2077 (original)\"}', NULL),
                  ('gog_1', 2, NULL, '{\"title\":\"Cyberpunk 2077\"}', NULL),
-                 ('gog_2', 2, NULL, '{\"title\":\"No unlocks\"}', NULL);",
+                 ('gog_2', 2, NULL, '{\"title\":\"No unlocks\"}', NULL),
+                 ('gog_1', 3, NULL, '{\"horizontalCover\":\"https://images.gog-statics.com/5a51d9_{formatter}.png\",\"logo\":\"x.png\"}', NULL),
+                 ('gog_2', 3, NULL, '{\"horizontalCover\":\"https://images.gog-statics.com/ffffff_{formatter}.png\"}', NULL);",
         )
         .unwrap();
         conn
@@ -242,6 +271,13 @@ mod tests {
         let names = names(&galaxy_db()).unwrap();
         assert_eq!(names.len(), 1);
         assert_eq!(names["gog:gog_1"], "Cyberpunk 2077");
+    }
+
+    #[test]
+    fn banners_read_horizontal_cover_of_games_with_unlocks() {
+        let banners = banners(&galaxy_db()).unwrap();
+        assert_eq!(banners.len(), 1);
+        assert_eq!(banners["gog:gog_1"], "https://images.gog-statics.com/5a51d9_{formatter}.png");
     }
 
     #[test]

@@ -24,14 +24,19 @@ interface Shelf {
   perRow: number;
   trophies: ShelfItem[];
   items: ShelfItem[];
+  /** Banner `data:` URLs keyed by game (see `gameKeyOf`); games without one are left out. */
+  banners: Record<string, string>;
 }
 
 const shelvesEl = document.getElementById("shelves") as HTMLDivElement;
 const tooltipEl = document.getElementById("tooltip") as HTMLDivElement;
 
 let knownKeys: Set<string> | null = null;
+let banners: Record<string, string> = {};
 
-const keyOf = (item: ShelfItem) => `${item.source}:${item.gameId}:${item.apiName}`;
+/** Matches `game_key` in src-tauri/src/achievement.rs. */
+const gameKeyOf = (item: ShelfItem) => `${item.source}:${item.gameId}`;
+const keyOf = (item: ShelfItem) => `${gameKeyOf(item)}:${item.apiName}`;
 
 function formatDate(unix: number): string {
   if (!unix) return "Unlocked";
@@ -49,7 +54,17 @@ function showTooltip(item: ShelfItem, anchor: HTMLElement) {
   const date = el("div", "tooltip-date", formatDate(item.unlockedAt));
   const rarity = rarityLabel(item.rarity);
   if (rarity) date.append(" · ", rarity);
+  const head: HTMLElement[] = [];
+  const banner = banners[gameKeyOf(item)];
+  if (banner) {
+    const img = el("img", "tooltip-banner");
+    img.src = banner;
+    img.alt = "";
+    head.push(img);
+  }
+  tooltipEl.classList.toggle("has-banner", head.length > 0);
   tooltipEl.replaceChildren(
+    ...head,
     el("div", "tooltip-game", item.gameName),
     el("div", "tooltip-title", item.title || item.apiName),
     el("div", "tooltip-desc", item.description || "No description"),
@@ -114,6 +129,7 @@ async function refresh() {
   }
 
   hideTooltip();
+  banners = shelf.banners;
   const rows: HTMLElement[] = [];
   for (let r = 0; r < shelf.trophyRows; r++) {
     const slice = shelf.trophies.slice(r * shelf.perRow, (r + 1) * shelf.perRow);

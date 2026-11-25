@@ -49,13 +49,25 @@ pub fn installed_names(paths: &SteamPaths) -> HashMap<u32, String> {
     names
 }
 
-/// Looks up a game name on the public store API. `None` for delisted or unknown apps.
-pub async fn fetch_store_name(client: &reqwest::Client, app_id: u32) -> Option<String> {
+/// Reads one string field of the app's basic details from the public store API.
+/// `None` for delisted or unknown apps.
+async fn fetch_store_field(client: &reqwest::Client, app_id: u32, field: &str) -> Option<String> {
     let url = format!("https://store.steampowered.com/api/appdetails?appids={app_id}&filters=basic");
     let body: serde_json::Value = client.get(url).send().await.ok()?.json().await.ok()?;
     body.get(app_id.to_string())?
         .get("data")?
-        .get("name")?
+        .get(field)?
         .as_str()
         .map(str::to_string)
+}
+
+/// Looks up a game name on the public store API. `None` for delisted or unknown apps.
+pub async fn fetch_store_name(client: &reqwest::Client, app_id: u32) -> Option<String> {
+    fetch_store_field(client, app_id, "name").await
+}
+
+/// Looks up the URL of a game's store header image. Newer games keep it under a hashed
+/// path, so it cannot be built from the app id alone.
+pub async fn fetch_store_header(client: &reqwest::Client, app_id: u32) -> Option<String> {
+    fetch_store_field(client, app_id, "header_image").await
 }

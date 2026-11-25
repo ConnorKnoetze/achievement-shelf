@@ -170,6 +170,20 @@ body {
   display: none;
 }
 
+.tooltip.has-banner {
+  width: 260px;
+}
+
+/* Runs edge to edge across the top of the card, over its padding. */
+.tooltip-banner {
+  display: block;
+  width: calc(100% + 24px);
+  margin: -10px -12px 8px;
+  aspect-ratio: 460 / 215;
+  object-fit: cover;
+  border-radius: 7px 7px 0 0;
+}
+
 .tooltip-game {
   color: var(--card-accent);
   font-size: 10.5px;

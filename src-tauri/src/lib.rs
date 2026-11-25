@@ -29,8 +29,8 @@ use steam::SteamPaths;
 // Window layout in logical pixels; must match the sizes in src/shelf.css.
 const SHELF_WIDTH: f64 = 520.0;
 const ROW_HEIGHT: f64 = 112.0;
-/// Empty space above the shelf where hover cards are drawn.
-const TOOLTIP_SPACE: f64 = 150.0;
+/// Empty space above the shelf where hover cards (game banner included) are drawn.
+const TOOLTIP_SPACE: f64 = 280.0;
 const PICKER_LABEL: &str = "picker";
 const SETTINGS_LABEL: &str = "settings";
 /// Sent with a fresh [`SettingsView`] whenever a setting changes, from the tray or the settings window.
@@ -83,6 +83,8 @@ struct Shelf {
     per_row: usize,
     trophies: Vec<ShelfItem>,
     items: Vec<ShelfItem>,
+    /// Banner `data:` URLs keyed by [`game_key`], once per game; games without one are left out.
+    banners: HashMap<String, String>,
 }
 
 /// An unlocked achievement as listed in the trophy picker. Icons are fetched separately.
@@ -109,13 +111,20 @@ struct Unlocked {
     achievements: Vec<Achievement>,
     /// Game names the launchers know locally, keyed by [`game_key`].
     names: HashMap<String, String>,
+    /// GOG store banner URL templates, keyed by [`game_key`].
+    gog_banners: HashMap<String, String>,
     launchers: Vec<Source>,
 }
 
 /// Reads every launcher that is installed. Fails only when none is.
 async fn load_unlocked() -> Result<Unlocked, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let mut unlocked = Unlocked { achievements: Vec::new(), names: HashMap::new(), launchers: Vec::new() };
+        let mut unlocked = Unlocked {
+            achievements: Vec::new(),
+            names: HashMap::new(),
+            gog_banners: HashMap::new(),
+            launchers: Vec::new(),
+        };
         if let Ok(paths) = SteamPaths::locate() {
             unlocked.launchers.push(Source::Steam);
             unlocked.achievements.extend(steam::stats::load_all(&paths));
@@ -131,6 +140,10 @@ async fn load_unlocked() -> Result<Unlocked, String> {
             match gog.names() {
                 Ok(names) => unlocked.names.extend(names),
                 Err(e) => eprintln!("achievement-shelf: cannot read GOG game names: {e}"),
+            }
+            match gog.banners() {
+                Ok(banners) => unlocked.gog_banners = banners,
+                Err(e) => eprintln!("achievement-shelf: cannot read GOG game banners: {e}"),
             }
         }
         if unlocked.launchers.is_empty() {
@@ -198,6 +211,29 @@ async fn shelf_items(state: &AppState, achievements: Vec<Achievement>) -> Vec<Sh
     items
 }
 
+/// Banners of every game in `achievements`, fetched once per game.
+async fn banners(
+    state: &AppState,
+    gog_banners: &HashMap<String, String>,
+    achievements: &[&Achievement],
+) -> HashMap<String, String> {
+    let mut banners = HashMap::new();
+    for achievement in achievements {
+        let key = achievement.game_key();
+        if banners.contains_key(&key) {
+            continue;
+        }
+        let gog_cover = gog_banners.get(&key).map(String::as_str);
+        if let Some(url) =
+            icons::banner_data_url(&state.client, &state.cache_dir, achievement.source, &achievement.game_id, gog_cover)
+                .await
+        {
+            banners.insert(key, url);
+        }
+    }
+    banners
+}
+
 #[tauri::command]
 async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
     let (rows, trophy_rows, trophy_capacity, trophy_keys) = {
@@ -205,7 +241,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         (settings.rows, settings.trophy_rows, settings.trophy_capacity(), settings.trophies.clone())
     };
 
-    let Unlocked { achievements: mut recent, names, .. } = load_unlocked().await?;
+    let Unlocked { achievements: mut recent, names, gog_banners, .. } = load_unlocked().await?;
     // Trophies keep the order the user chose. Ones no longer found on disk are skipped,
     // and ones past what the trophy rows hold are not shown.
     let mut trophies: Vec<Achievement> = trophy_keys
@@ -215,7 +251,9 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         .collect();
     recent.truncate(rows * PER_ROW);
 
-    resolve_names(&state, names, &recent.iter().chain(&trophies).collect::<Vec<_>>()).await;
+    let shown: Vec<&Achievement> = recent.iter().chain(&trophies).collect();
+    resolve_names(&state, names, &shown).await;
+    let banners = banners(&state, &gog_banners, &shown).await;
     state.rarity.fill(&state.client, &mut recent).await;
     state.rarity.fill(&state.client, &mut trophies).await;
     Ok(Shelf {
@@ -224,13 +262,14 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         per_row: PER_ROW,
         trophies: shelf_items(&state, trophies).await,
         items: shelf_items(&state, recent).await,
+        banners,
     })
 }
 
 /// Every unlocked achievement, newest first, for the trophy picker.
 #[tauri::command]
 async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> {
-    let Unlocked { mut achievements, names, launchers } = load_unlocked().await?;
+    let Unlocked { mut achievements, names, launchers, .. } = load_unlocked().await?;
     resolve_names(&state, names, &achievements.iter().collect::<Vec<_>>()).await;
     state.rarity.fill(&state.client, &mut achievements).await;
     let items = achievements

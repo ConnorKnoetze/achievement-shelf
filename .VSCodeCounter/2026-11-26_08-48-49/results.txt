@@ -1,0 +1,77 @@
+Date : 2026-11-26 08:48:49
+Directory : c:\Users\conno\Desktop\Projects\achievement-shelf
+Total : 37 files,  9375 codes, 178 comments, 920 blanks, all 10473 lines
+
+Languages
++--------------------+------------+------------+------------+------------+------------+
+| language           | files      | code       | comment    | blank      | total      |
++--------------------+------------+------------+------------+------------+------------+
+| TOML               |          2 |      4,668 |          2 |        489 |      5,159 |
+| Rust               |         18 |      1,909 |        145 |        242 |      2,296 |
+| JSON               |          4 |      1,481 |          0 |          4 |      1,485 |
+| PostCSS            |          3 |        672 |          9 |        110 |        791 |
+| TypeScript         |          5 |        517 |         22 |         67 |        606 |
+| HTML               |          3 |        104 |          0 |          6 |        110 |
+| JSON with Comments |          1 |         14 |          0 |          1 |         15 |
+| XML                |          1 |         10 |          0 |          1 |         11 |
++--------------------+------------+------------+------------+------------+------------+
+
+Directories
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                  | files      | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                     |         37 |      9,375 |        178 |        920 |     10,473 |
+| . (Files)                                                                             |          7 |      1,568 |          1 |         12 |      1,581 |
+| src                                                                                   |          7 |      1,177 |         30 |        174 |      1,381 |
+| src-tauri                                                                             |         23 |      6,630 |        147 |        734 |      7,511 |
+| src-tauri (Files)                                                                     |          5 |      4,717 |          2 |        492 |      5,211 |
+| src-tauri\capabilities                                                                |          1 |          7 |          0 |          1 |          8 |
+| src-tauri\src                                                                         |         17 |      1,906 |        145 |        241 |      2,292 |
+| src-tauri\src (Files)                                                                 |          8 |      1,227 |        101 |        153 |      1,481 |
+| src-tauri\src\bin                                                                     |          1 |         38 |          4 |          4 |         46 |
+| src-tauri\src\steam                                                                   |          8 |        641 |         40 |         84 |        765 |
++---------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++---------------------------------------------------------------------------------------+--------------------+------------+------------+------------+------------+
+| filename                                                                              | language           | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------+--------------------+------------+------------+------------+------------+
+| c:\Users\conno\Desktop\Projects\achievement-shelf\index.html                          | HTML               |         14 |          0 |          1 |         15 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\package-lock.json                   | JSON               |      1,419 |          0 |          1 |      1,420 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\package.json                        | JSON               |         19 |          0 |          1 |         20 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\picker.html                         | HTML               |         30 |          0 |          1 |         31 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\settings.html                       | HTML               |         60 |          0 |          4 |         64 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\Cargo.lock                | TOML               |      4,648 |          2 |        484 |      5,134 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\Cargo.toml                | TOML               |         20 |          0 |          5 |         25 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\app-icon.svg              | XML                |         10 |          0 |          1 |         11 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\build.rs                  | Rust               |          3 |          0 |          1 |          4 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\capabilities\default.json | JSON               |          7 |          0 |          1 |          8 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\achievement.rs        | Rust               |         38 |          6 |          8 |         52 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\bin\dump.rs           | Rust               |         38 |          4 |          4 |         46 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\gog.rs                | Rust               |        215 |         15 |         27 |        257 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\icons.rs              | Rust               |         95 |          6 |         14 |        115 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\lib.rs                | Rust               |        586 |         42 |         55 |        683 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\main.rs               | Rust               |          4 |          1 |          2 |          7 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\rarity.rs             | Rust               |         85 |          9 |         13 |        107 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\settings.rs           | Rust               |        147 |         15 |         27 |        189 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\kv.rs           | Rust               |        128 |          4 |         18 |        150 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\mod.rs          | Rust               |          8 |          0 |          2 |         10 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\names.rs        | Rust               |         53 |          3 |          6 |         62 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\paths.rs        | Rust               |         75 |          5 |         14 |         94 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\rarity.rs       | Rust               |         96 |         13 |         14 |        123 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\schema.rs       | Rust               |         66 |          5 |          5 |         76 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\stats.rs        | Rust               |        106 |          7 |         14 |        127 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\steam\vdf.rs          | Rust               |        109 |          3 |         11 |        123 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\src\watch.rs              | Rust               |         57 |          7 |          7 |         71 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src-tauri\tauri.conf.json           | JSON               |         36 |          0 |          1 |         37 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\picker.css                      | PostCSS            |        320 |          2 |         57 |        379 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\picker.ts                       | TypeScript         |        310 |         14 |         34 |        358 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\rarity.ts                       | TypeScript         |         16 |          2 |          2 |         20 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\settings.css                    | PostCSS            |        157 |          2 |         27 |        186 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\settings.ts                     | TypeScript         |         58 |          2 |         10 |         70 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\shelf.css                       | PostCSS            |        195 |          5 |         26 |        226 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\src\shelf.ts                        | TypeScript         |        121 |          3 |         18 |        142 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\tsconfig.json                       | JSON with Comments |         14 |          0 |          1 |         15 |
+| c:\Users\conno\Desktop\Projects\achievement-shelf\vite.config.ts                      | TypeScript         |         12 |          1 |          3 |         16 |
+| Total                                                                                 |                    |      9,375 |        178 |        920 |     10,473 |
++---------------------------------------------------------------------------------------+--------------------+------------+------------+------------+------------+
