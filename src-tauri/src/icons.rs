@@ -1,7 +1,10 @@
 //! Achievement icons and game banners: downloaded once from the launcher's CDN, then served
 //! from the disk cache.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 
@@ -27,6 +30,33 @@ const STEAM_BANNER_HOSTS: [&str; 2] = [
 const GOG_STORE_IMAGE_HOST: &str = "https://images.gog-statics.com/";
 /// Fills the `{formatter}` of a GOG `horizontalCover` template: a 432x243 JPEG tile.
 const GOG_BANNER_FORMAT: &str = "_product_tile_extended_432x243.jpg";
+
+/// How long an image that could not be found is left before it is looked for again.
+const MISS_RETRY: Duration = Duration::from_secs(10 * 60);
+
+/// Images already turned into `data:` URLs this session, by cache path, with when each was
+/// looked up. The shelf asks for the same images on every refresh; reading, encoding and,
+/// for missing ones, downloading them again each time held every refresh up.
+static ENCODED: LazyLock<Mutex<HashMap<PathBuf, (Option<String>, Instant)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The remembered result for `path`: `Some(None)` for a recent miss, `None` if it must be loaded.
+fn remembered(path: &Path) -> Option<Option<String>> {
+    match ENCODED.lock().unwrap().get(path) {
+        Some((Some(url), _)) => Some(Some(url.clone())),
+        Some((None, at)) if at.elapsed() < MISS_RETRY => Some(None),
+        _ => None,
+    }
+}
+
+fn remember(path: PathBuf, url: &Option<String>) {
+    ENCODED.lock().unwrap().insert(path, (url.clone(), Instant::now()));
+}
+
+/// Looks for missing images again on the next request, as on a manual refresh.
+pub fn forget_misses() {
+    ENCODED.lock().unwrap().retain(|_, (url, _)| url.is_some());
+}
 
 fn is_safe_file_name(name: &str) -> bool {
     !name.is_empty()
@@ -66,7 +96,12 @@ pub async fn icon_data_url(
     icon: &str,
 ) -> Option<String> {
     let (path, urls) = locate(cache_dir, source, game_id, icon)?;
-    cached_data_url(client, &path, &urls, &format!("icon {icon} for {source} game {game_id}")).await
+    if let Some(url) = remembered(&path) {
+        return url;
+    }
+    let url = cached_data_url(client, &path, &urls, &format!("icon {icon} for {source} game {game_id}")).await;
+    remember(path, &url);
+    url
 }
 
 /// Where the game's banner is cached and the URLs to try, or `None` if there is none or the
@@ -101,11 +136,20 @@ pub async fn banner_data_url(
     gog_cover: Option<&str>,
 ) -> Option<String> {
     let (path, urls) = locate_banner(cache_dir, source, game_id, gog_cover)?;
-    let what = format!("banner for {source} game {game_id}");
-    if let Some(bytes) = tokio_read(&path).await {
-        return Some(data_url(&path, &bytes));
+    if let Some(url) = remembered(&path) {
+        return url;
     }
-    let mut bytes = download(client, &urls).await;
+    let url = load_banner(client, &path, &urls, source, game_id).await;
+    remember(path, &url);
+    url
+}
+
+async fn load_banner(client: &reqwest::Client, path: &Path, urls: &[String], source: Source, game_id: &str) -> Option<String> {
+    let what = format!("banner for {source} game {game_id}");
+    if let Some(bytes) = tokio_read(path).await {
+        return Some(data_url(path, &bytes));
+    }
+    let mut bytes = download(client, urls).await;
     if bytes.is_none() && source == Source::Steam {
         // Newer games keep their header under a hashed path that only the store API knows.
         let app_id: u32 = game_id.parse().ok()?;
@@ -119,8 +163,8 @@ pub async fn banner_data_url(
         eprintln!("achievement-shelf: {what} not found");
         return None;
     };
-    store(&path, &bytes, &what);
-    Some(data_url(&path, &bytes))
+    store(path, &bytes, &what);
+    Some(data_url(path, &bytes))
 }
 
 /// Whether a header URL from the store API points at that app's images on a Steam image host.

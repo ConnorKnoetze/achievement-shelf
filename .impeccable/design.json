@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-26T07:10:00Z",
+  "title": "Design System: Achievement Shelf",
+  "extensions": {
+    "colorMeta": {
+      "card-stock": {
+        "role": "neutral",
+        "displayName": "Card Stock",
+        "canonical": "#f4f2ec",
+        "tonalRamp": [
+          "#2a2925",
+          "#4a4842",
+          "#6c6a62",
+          "#8f8c84",
+          "#b3b0a8",
+          "#d3d0c8",
+          "#e8e6df",
+          "#f4f2ec"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#16181b",
+        "tonalRamp": [
+          "#0b0c0d",
+          "#16181b",
+          "#2a2d31",
+          "#3f4348",
+          "#565b62",
+          "#767b82",
+          "#9ca0a6",
+          "#c6c9cd"
+        ]
+      },
+      "rail-face": {
+        "role": "neutral",
+        "displayName": "Anodised Black",
+        "canonical": "#17191c",
+        "tonalRamp": [
+          "#050506",
+          "#0a0b0d",
+          "#17191c",
+          "#23262a",
+          "#34383e",
+          "#4b5058",
+          "#6b7078",
+          "#9196a0"
+        ]
+      },
+      "brass-light": {
+        "role": "secondary",
+        "displayName": "Brushed Brass",
+        "canonical": "#e2c07a",
+        "tonalRamp": [
+          "#3d2c10",
+          "#5e451c",
+          "#8a642a",
+          "#a9823e",
+          "#c5a05a",
+          "#e2c07a",
+          "#efd8a6",
+          "#f8eed6"
+        ]
+      },
+      "tier-common": {
+        "role": "primary",
+        "displayName": "Common Grey",
+        "canonical": "#c9c2b6"
+      },
+      "tier-uncommon": {
+        "role": "primary",
+        "displayName": "Uncommon Green",
+        "canonical": "#7fd38a"
+      },
+      "tier-rare": {
+        "role": "primary",
+        "displayName": "Rare Blue",
+        "canonical": "#6cb4f5"
+      },
+      "tier-epic": {
+        "role": "primary",
+        "displayName": "Epic Violet",
+        "canonical": "#c79bff"
+      },
+      "tier-legendary": {
+        "role": "primary",
+        "displayName": "Legendary Amber",
+        "canonical": "#ffb347"
+      }
+    },
+    "typographyMeta": {
+      "grade-tier": {
+        "displayName": "Grade Tier",
+        "purpose": "Tier name printed on the grade label's colour block."
+      },
+      "grade-pct": {
+        "displayName": "Grade Percent",
+        "purpose": "Unlock percentage on the grade label, tabular numerals."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Achievement name on the certificate."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Achievement description."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "Game name and unlock date."
+      }
+    },
+    "shadows": [
+      {
+        "name": "slab-rest",
+        "value": "inset 0 0 0 1px rgba(255,255,255,.45), inset 0 1px 0 rgba(255,255,255,.85), inset 0 -2px 3px rgba(0,0,0,.2), 0 6px 10px -3px rgba(0,0,0,.5)",
+        "purpose": "Acrylic edges and contact shadow of a seated slab."
+      },
+      {
+        "name": "slab-lifted",
+        "value": "0 14px 16px -6px rgba(0,0,0,.55)",
+        "purpose": "A slab lifted out of its slot on hover."
+      },
+      {
+        "name": "rail",
+        "value": "0 5px 9px -2px rgba(0,0,0,.55)",
+        "purpose": "The rail's cast shadow on the wallpaper."
+      },
+      {
+        "name": "certificate",
+        "value": "0 10px 24px -4px rgba(0,0,0,.55)",
+        "purpose": "The floating tooltip certificate."
+      }
+    ],
+    "motion": [
+      {
+        "name": "lift",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Expo ease-out for the hover lift, slot-in and glare."
+      },
+      {
+        "name": "slab-hover",
+        "value": "0.28s",
+        "purpose": "Lift out of the slot."
+      },
+      {
+        "name": "slot-in",
+        "value": "0.6s",
+        "purpose": "A new unlock dropping into its slot."
+      },
+      {
+        "name": "glare",
+        "value": "0.9s",
+        "purpose": "One glare sweep across a legendary slab on hover or landing."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Graded Slab",
+      "kind": "custom",
+      "refersTo": "slab",
+      "description": "An achievement sealed in clear acrylic with a printed grade label, lifting out of its slot on hover.",
+      "html": "<div class=\"ds-slab\"><div class=\"ds-grade\"><span class=\"ds-grade-tier\">Epic</span><span class=\"ds-grade-pct\">1.8%</span></div><div class=\"ds-insert\"></div></div>",
+      "css": ".ds-slab { width: 62px; height: 88px; padding: 4px; display: flex; flex-direction: column; gap: 4px; border-radius: 5px; background: linear-gradient(160deg, rgba(255,255,255,.38), rgba(255,255,255,.1) 38%, rgba(255,255,255,.04) 62%, rgba(255,255,255,.16)), rgba(18,22,28,.22); box-shadow: inset 0 0 0 1px rgba(255,255,255,.45), inset 0 1px 0 rgba(255,255,255,.85), 0 6px 10px -3px rgba(0,0,0,.5); transition: transform .28s cubic-bezier(.16,1,.3,1); } .ds-slab:hover { transform: translateY(-8px); } .ds-grade { display: flex; flex-direction: column; height: 22px; border-radius: 2px; overflow: hidden; font-family: 'Barlow Condensed', 'Segoe UI', sans-serif; text-transform: uppercase; text-align: center; color: #16181b; line-height: 1; } .ds-grade-tier { flex: 1; display: grid; place-items: center; background: #c79bff; font-weight: 700; font-size: 8.5px; letter-spacing: .05em; } .ds-grade-pct { flex: 1; display: grid; place-items: center; background: #f4f2ec; font-weight: 600; font-size: 10px; } .ds-insert { width: 54px; height: 54px; border-radius: 2px; background: #0d1014; box-shadow: inset 0 1px 3px rgba(0,0,0,.8); }"
+    },
+    {
+      "name": "Display Rail",
+      "kind": "custom",
+      "refersTo": "rail",
+      "description": "Matte black anodised rail with a slot channel; the trophy variant adds a brass front edge.",
+      "html": "<div class=\"ds-rail\"></div>",
+      "css": ".ds-rail { position: relative; width: 300px; height: 12px; border-radius: 3px; background: linear-gradient(to bottom, #34383e 0 1px, #23262a 1px 4px, #17191c 4px calc(100% - 2px), #0a0b0d calc(100% - 2px)); box-shadow: 0 5px 9px -2px rgba(0,0,0,.55); } .ds-rail::before { content: ''; position: absolute; top: 1px; left: 14px; right: 14px; height: 3px; border-radius: 1px; background: #050506; }"
+    },
+    {
+      "name": "Grading Certificate",
+      "kind": "card",
+      "refersTo": "certificate",
+      "description": "The hover tooltip: black anodised card with the banner, icon, title, game and date meta, description, and a full-width printed grade.",
+      "html": "<div class=\"ds-cert\"><div class=\"ds-cert-title\">The Fool on the Hill</div><div class=\"ds-cert-meta\">Example Game · 14 Mar 2025</div><div class=\"ds-cert-desc\">Finish the main story.</div><div class=\"ds-cert-grade\"><span>EPIC</span><span>1.8% of players</span></div></div>",
+      "css": ".ds-cert { width: 264px; padding: 12px; border-radius: 6px; background: linear-gradient(to bottom, #34383e 0 1px, #1d2024 1px, #17191c 64px); color: #eef0f2; font: 12px/1.4 'Segoe UI', system-ui, sans-serif; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 10px 24px -4px rgba(0,0,0,.55); } .ds-cert-title { font-size: 14px; font-weight: 600; } .ds-cert-meta { font-size: 11px; color: #9aa1a9; } .ds-cert-desc { margin-top: 9px; color: #c4c9cf; } .ds-cert-grade { display: flex; height: 26px; margin-top: 12px; border-radius: 3px; overflow: hidden; font: 600 13px/26px 'Barlow Condensed', sans-serif; text-transform: uppercase; color: #16181b; } .ds-cert-grade span:first-child { padding: 0 10px; background: #c79bff; font-weight: 700; } .ds-cert-grade span:last-child { flex: 1; padding: 0 10px; background: #f4f2ec; }"
+    },
+    {
+      "name": "Placard",
+      "kind": "chip",
+      "refersTo": "placard",
+      "description": "Empty and error messages standing on the rail.",
+      "html": "<span class=\"ds-placard\">No unlocked achievements found yet</span>",
+      "css": ".ds-placard { display: inline-block; padding: 6px 12px; border-radius: 3px; background: #f4f2ec; color: #16181b; font: 12px 'Segoe UI', system-ui, sans-serif; box-shadow: 0 5px 9px -3px rgba(0,0,0,.5); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Grading Rail",
+    "overview": "Every achievement is a graded collectible. It's sealed in a clear acrylic slab with a printed grade label, and stands in a matte black display rail fixed to the bottom-right of the user's desktop. The user's own wallpaper is the ground, seen through the acrylic. The system is made of three real materials (clear acrylic, black anodised rail, off-white card stock) plus the printed rarity colour. Nothing glows and nothing is decoration. The grade label is the one place colour appears, so rarity is the first thing the eye reads.\n\nThe widget is on screen all day over unknown wallpaper, so every surface has to hold up over both light and dark backgrounds, and it stays still unless the user touches it.",
+    "keyCharacteristics": [
+      "Clear acrylic slabs, 62×88, each with a two-tone grade label and a dark icon insert.",
+      "Matte black rails with a slot channel; the slab's foot sits down in the slot.",
+      "Off-white card stock for every printed surface: grade labels and placards. The tooltip certificate is cut from the rail's black anodised stock, with its grade printed on card stock.",
+      "Colour comes only from the five rarity tiers.",
+      "Motion only happens when the user acts or something changes: lift on hover, a drop into the slot for new unlocks."
+    ],
+    "rules": [
+      {
+        "name": "The Printed Colour Rule",
+        "body": "Rarity colour appears only as printed ink on a grade label: never as glow, border tint, or background wash.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ungraded Rule",
+        "body": "An achievement with no known rarity gets an unprinted tier block (card stock with muted \"Ungraded\" text). It never borrows a tier colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The No Eyebrow Rule",
+        "body": "The certificate opens with the title. The game name goes under it as a plain meta line, never as a small tracked caps label above it.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do keep colour to the printed rarity tiers. Every other surface is acrylic, black rail, brass, or card stock.",
+      "Do put any text that sits over the wallpaper on card stock.",
+      "Do make every motion answer a user action or a change: hover lift, new-unlock drop, legendary glare."
+    ],
+    "donts": [
+      "Don't loop any animation; the widget is on screen all day.",
+      "Don't use glows, neon edges, or glassy blur. `backdrop-filter` can't see the desktop through the transparent window anyway.",
+      "Don't use emoji or Unicode glyphs as icons.",
+      "Don't put an eyebrow label above a heading."
+    ]
+  }
+}

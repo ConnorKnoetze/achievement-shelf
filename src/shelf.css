@@ -1,16 +1,56 @@
+/* Graded Slab Rail: each achievement stands in a clear graded slab in a black display rail. */
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-600-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-600-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-700-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-700-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* Sizes here must match SHELF_WIDTH / ROW_HEIGHT in src-tauri/src/lib.rs. */
 :root {
+  --shelf-width: 520px;
   --row-height: 112px;
-  --plank-height: 22px;
-  --item-size: 60px;
-  --wood-light: #b77a45;
-  --wood-mid: #94592c;
-  --wood-dark: #5e3417;
-  --wood-edge: #47250f;
-  --card-bg: rgba(24, 18, 14, 0.94);
-  --card-text: #f4ead8;
-  --card-muted: #c7b498;
-  --card-accent: #e8b84a;
+  --rail-height: 12px;
+  --rail-gap: 10px;
+  --slab-width: 62px;
+  --slab-height: 88px;
+  --card: #f4f2ec;
+  --ink: #16181b;
+  --ink-muted: #565b62;
+  --rail-top: #34383e;
+  --rail-face: #17191c;
+  --rail-base: #0a0b0d;
+  --brass-light: #e2c07a;
+  --brass-dark: #8a642a;
+  --grade-face: "Barlow Condensed", "Segoe UI", system-ui, sans-serif;
+  --lift: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * {
@@ -27,12 +67,14 @@ body {
   user-select: none;
 }
 
+/* The window is sized for the largest shelf, so the shelf has its own width and sits in the
+   bottom-right corner. */
 .shelves {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 100%;
-  padding: 0 14px;
+  width: var(--shelf-width);
+  padding: 0 10px;
 }
 
 .row {
@@ -46,104 +88,317 @@ body {
   display: flex;
   justify-content: center;
   align-items: flex-end;
-  gap: 16px;
+  gap: 14px;
   padding: 0 18px;
-  height: calc(var(--row-height) - var(--plank-height) - 14px);
+  height: calc(var(--row-height) - var(--rail-height) - var(--rail-gap));
 }
 
-.row-items.message {
-  align-items: center;
-  color: var(--card-text);
-  font-size: 13px;
-  text-shadow: 0 1px 3px #000;
-}
-
-/* The wooden plank: top surface, front edge with grain, and two brackets underneath. */
-.plank {
-  position: relative;
-  height: var(--plank-height);
+/* Messages stand on the rail as a small printed placard, legible over any wallpaper. */
+.placard {
+  margin-bottom: -3px;
+  padding: 6px 12px;
   border-radius: 3px;
-  background:
-    repeating-linear-gradient(
-      92deg,
-      rgba(0, 0, 0, 0) 0 22px,
-      rgba(60, 30, 10, 0.18) 22px 24px,
-      rgba(0, 0, 0, 0) 24px 61px,
-      rgba(255, 220, 170, 0.08) 61px 63px
-    ),
-    linear-gradient(to bottom, var(--wood-light) 0 7px, var(--wood-mid) 7px 18px, var(--wood-dark) 18px);
-  box-shadow:
-    0 6px 10px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(255, 230, 190, 0.35);
-  margin-bottom: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  box-shadow: 0 5px 9px -3px rgba(0, 0, 0, 0.5);
 }
 
-.plank::before,
-.plank::after {
+/* The rail: a matte black anodised bar with a slot groove the slabs stand in. */
+.rail {
+  position: relative;
+  z-index: 1;
+  height: var(--rail-height);
+  margin: 0 4px var(--rail-gap);
+  border-radius: 3px;
+  background: linear-gradient(
+    to bottom,
+    var(--rail-top) 0 1px,
+    #23262a 1px 4px,
+    var(--rail-face) 4px calc(100% - 2px),
+    var(--rail-base) calc(100% - 2px)
+  );
+  box-shadow: 0 5px 9px -2px rgba(0, 0, 0, 0.55);
+}
+
+/* The slot: a dark channel along the top face, short of the rail's ends. */
+.rail::before {
   content: "";
   position: absolute;
-  top: 100%;
-  width: 12px;
-  height: 14px;
-  background: linear-gradient(to right, var(--wood-dark), var(--wood-edge));
-  clip-path: polygon(0 0, 100% 0, 100% 15%, 15% 100%, 0 100%);
+  top: 1px;
+  left: 14px;
+  right: 14px;
+  height: 3px;
+  border-radius: 1px;
+  background: #050506;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
-.plank::before {
-  left: 48px;
+/* The trophy rail keeps the black bar and adds a brushed-brass front edge. */
+.row.trophy .rail {
+  background:
+    linear-gradient(to bottom, transparent 0 calc(100% - 5px), var(--brass-light) calc(100% - 5px), var(--brass-dark)),
+    linear-gradient(
+      to bottom,
+      var(--rail-top) 0 1px,
+      #23262a 1px 4px,
+      var(--rail-face) 4px calc(100% - 2px),
+      var(--rail-base) calc(100% - 2px)
+    );
 }
 
-.plank::after {
-  right: 48px;
-  transform: scaleX(-1);
+/* The slot is the slab's hit box and never moves; only the slab inside it lifts, so the
+   cursor cannot fall off the bottom of a lifted slab and set it bobbing. Its foot sits down
+   inside the rail's slot. */
+.slot {
+  position: relative;
+  flex: none;
+  width: var(--slab-width);
+  height: var(--slab-height);
+  margin-bottom: -4px;
 }
 
-/* Each achievement sits on the shelf like a small framed plaque. */
-.item {
-  width: var(--item-size);
-  height: var(--item-size);
+/* The lifted slab's deeper shadow, faded in rather than transitioning box-shadow. It sits
+   where the lifted slab will be, behind it. */
+.slot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 5px;
+  box-shadow: 0 14px 16px -6px rgba(0, 0, 0, 0.55);
+  transform: translateY(-8px);
+  opacity: 0;
+  transition: opacity 0.28s var(--lift);
+  pointer-events: none;
+}
+
+.slot:hover::before {
+  opacity: 1;
+}
+
+/* The slab: clear acrylic, grade label on top, the icon in a dark insert. It keeps its own
+   compositor layer, so lifting it never re-rasterises the icon at a new sub-pixel offset. */
+.slab {
+  position: relative;
+  width: var(--slab-width);
+  height: var(--slab-height);
   padding: 4px;
-  border-radius: 6px;
-  background: linear-gradient(145deg, #e3c27a, #9a7330 60%, #6b4c1c);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 5px;
+  overflow: hidden;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.1) 38%, rgba(255, 255, 255, 0.04) 62%, rgba(255, 255, 255, 0.16)),
+    rgba(18, 22, 28, 0.22);
   box-shadow:
-    0 4px 6px rgba(0, 0, 0, 0.5),
-    inset 0 1px 1px rgba(255, 255, 255, 0.5);
-  transform-origin: bottom center;
-  transition: transform 0.15s ease;
+    inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.2),
+    0 6px 10px -3px rgba(0, 0, 0, 0.5);
+  will-change: transform;
+  transition: transform 0.28s var(--lift);
   cursor: default;
 }
 
-.item:hover {
-  transform: translateY(-4px) scale(1.06);
+/* Lifted out of its slot. */
+.slot:hover > .slab {
+  transform: translateY(-8px);
 }
 
-.item img,
-.item-fallback {
+/* Trophies can be picked up and moved along the trophy rails. */
+.slot.movable > .slab {
+  cursor: grab;
+}
+
+.shelves.dragging,
+.shelves.dragging .slab {
+  cursor: grabbing;
+}
+
+/* While one is carried, the others stay seated; its own slot shows as a faint outline. */
+.shelves.dragging .slot:hover > .slab,
+.slot.drag-source > .slab {
+  transform: none;
+}
+
+.shelves.dragging .slot::before {
+  opacity: 0;
+}
+
+.slot.drag-source > .slab {
+  opacity: 0.25;
+}
+
+/* Placed by a translate set from script, so moving it never re-runs layout. */
+.slab.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  margin: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.2),
+    0 18px 22px -6px rgba(0, 0, 0, 0.6);
+  transition: none;
+}
+
+/* Glare on the acrylic face, above everything inside it. */
+.slab::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(162deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 30%, transparent 46%);
+  pointer-events: none;
+}
+
+.slab-insert {
+  width: 54px;
+  height: 54px;
+  padding: 1px;
+  border-radius: 2px;
+  background: #0d1014;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.slab-insert img {
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
 }
 
-.item-fallback {
+.slab-fallback {
   display: grid;
   place-items: center;
-  background: #2a1a10;
-  font-size: 26px;
+  width: 100%;
+  height: 100%;
+  color: #8b929b;
 }
 
-.item.new {
-  animation: drop-in 0.7s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+.slab-fallback svg {
+  width: 30px;
+  height: 30px;
 }
 
-@keyframes drop-in {
+/* The printed grade: a block in the tier colour over the unlock percentage. Ungraded
+   labels leave the colour block unprinted. */
+.grade {
+  --tier: var(--card);
+  display: flex;
+  overflow: hidden;
+  border-radius: 2px;
+  font-family: var(--grade-face);
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.grade-tier {
+  background: var(--tier);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.grade-pct {
+  background: var(--card);
+  font-weight: 600;
+}
+
+.grade:not([class*="tier-"]) .grade-tier {
+  color: var(--ink-muted);
+}
+
+.slab-grade {
+  flex-direction: column;
+  height: 22px;
+  text-align: center;
+}
+
+.slab-grade .grade-tier,
+.slab-grade .grade-pct {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
+.slab-grade .grade-tier {
+  font-size: 8.5px;
+}
+
+.slab-grade .grade-pct {
+  font-size: 10px;
+}
+
+/* Colours match the rarity labels in the picker. */
+.tier-common {
+  --tier: #c9c2b6;
+}
+
+.tier-uncommon {
+  --tier: #7fd38a;
+}
+
+.tier-rare {
+  --tier: #6cb4f5;
+}
+
+.tier-epic {
+  --tier: #c79bff;
+}
+
+.tier-legendary {
+  --tier: #ffb347;
+}
+
+/* Legendary slabs catch the light: one glare sweep across the acrylic when lifted, and
+   when a new one lands. Nothing loops, since the shelf is on screen all day. */
+.slab.tier-legendary::before {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  top: -10%;
+  bottom: -10%;
+  left: 0;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 250, 230, 0.6), transparent);
+  transform: translateX(-180%) skewX(-16deg);
+  pointer-events: none;
+}
+
+.slab.tier-legendary:hover::before {
+  animation: glare 0.9s var(--lift);
+}
+
+.slab.tier-legendary.new::before {
+  animation: glare 0.9s 0.5s var(--lift);
+}
+
+@keyframes glare {
   from {
-    transform: translateY(-120px);
+    transform: translateX(-180%) skewX(-16deg);
+  }
+  to {
+    transform: translateX(330%) skewX(-16deg);
+  }
+}
+
+/* A new unlock drops into its slot. Backwards fill only, so hover still lifts it afterwards. */
+.slab.new {
+  animation: slot-in 0.6s var(--lift) backwards;
+}
+
+@keyframes slot-in {
+  from {
+    transform: translateY(-96px);
     opacity: 0;
   }
-  70% {
-    transform: translateY(0) scaleY(0.9);
+  60% {
+    transform: translateY(3px);
     opacity: 1;
   }
   to {
@@ -151,89 +406,163 @@ body {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .slab.tier-legendary::before {
+    animation: none;
+  }
+
+  .slab.new {
+    animation-duration: 0.01s;
+  }
+
+  .tooltip {
+    transition: none;
+  }
+}
+
+/* The tooltip is the slab's grading certificate: a card of the rail's matte black anodised
+   stock, the game banner across the top, and the grade printed as a full-width label. */
 .tooltip {
   position: absolute;
   z-index: 10;
-  max-width: 260px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(232, 184, 74, 0.35);
-  background: var(--card-bg);
-  color: var(--card-text);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  width: 264px;
+  padding: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: linear-gradient(to bottom, var(--rail-top) 0 1px, #1d2024 1px, var(--rail-face) 64px);
+  color: #eef0f2;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 10px 24px -4px rgba(0, 0, 0, 0.55);
   pointer-events: none;
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.4;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.18s var(--lift),
+    transform 0.22s var(--lift);
+}
+
+@starting-style {
+  .tooltip {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 .tooltip[hidden] {
   display: none;
 }
 
-.tooltip.has-banner {
-  width: 260px;
-}
-
-/* Runs edge to edge across the top of the card, over its padding. */
-.tooltip-banner {
+/* Bleeds over the card's padding and fades into the black stock at its foot. */
+.cert-banner {
   display: block;
   width: calc(100% + 24px);
-  margin: -10px -12px 8px;
+  margin: -12px -12px 0;
   aspect-ratio: 460 / 215;
   object-fit: cover;
-  border-radius: 7px 7px 0 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent 88%);
+  mask-image: linear-gradient(to bottom, #000 40%, transparent 88%);
 }
 
-.tooltip-game {
-  color: var(--card-accent);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.cert-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
 
-.tooltip-title {
-  margin-top: 2px;
+/* With a banner, the icon rises into its faded foot. */
+.has-banner .cert-head {
+  margin-top: -26px;
+}
+
+/* The icon in the same dark insert and acrylic edge as on the slab. */
+.cert-icon {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  padding: 2px;
+  border-radius: 5px;
+  background: #0d1014;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 4px 8px -2px rgba(0, 0, 0, 0.6);
+}
+
+.cert-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.cert-icon .slab-fallback svg {
+  width: 28px;
+  height: 28px;
+}
+
+.cert-heading {
+  min-width: 0;
+  padding-bottom: 1px;
+}
+
+.cert-title {
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
 }
 
-.tooltip-desc {
-  margin-top: 3px;
-  color: var(--card-muted);
-}
-
-.tooltip-date {
-  margin-top: 6px;
+.cert-meta {
+  margin-top: 2px;
   font-size: 11px;
-  color: var(--card-muted);
+  color: #9aa1a9;
 }
 
-/* The trophy shelf: a darker plank with a brass trim, and plaques that glow. */
-.row.trophy .plank {
-  background:
-    linear-gradient(to bottom, #f3d27a 0 2px, rgba(0, 0, 0, 0) 2px),
-    repeating-linear-gradient(
-      92deg,
-      rgba(0, 0, 0, 0) 0 22px,
-      rgba(20, 8, 2, 0.25) 22px 24px,
-      rgba(0, 0, 0, 0) 24px 61px,
-      rgba(255, 220, 170, 0.06) 61px 63px
-    ),
-    linear-gradient(to bottom, #6e3f1f 0 7px, #55301a 7px 18px, #3a1f0e 18px);
+.cert-desc {
+  margin: 9px 0 0;
+  color: #c4c9cf;
+  text-wrap: pretty;
 }
 
-.row.trophy .item {
-  background: linear-gradient(145deg, #fff0b8, #e0a92e 55%, #8c5d12);
-  box-shadow:
-    0 0 12px rgba(255, 200, 80, 0.55),
-    0 4px 6px rgba(0, 0, 0, 0.5),
-    inset 0 1px 1px rgba(255, 255, 255, 0.7);
+/* The printed grade, run across the foot of the certificate. */
+.cert-grade {
+  height: 26px;
+  margin-top: 12px;
+  border-radius: 3px;
 }
 
-/* Rarity tiers, coloured like loot. */
-.rarity-common { color: #c9c2b6; }
-.rarity-uncommon { color: #7fd38a; }
-.rarity-rare { color: #6cb4f5; }
-.rarity-epic { color: #c79bff; }
-.rarity-legendary { color: #ffb347; }
+.cert-grade .grade-tier,
+.cert-grade .grade-pct {
+  display: flex;
+  align-items: center;
+}
+
+.cert-grade .grade-tier {
+  flex: none;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.cert-grade .grade-pct {
+  flex: 1;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 16px;
+}
+
+.cert-grade-note {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+.cert-grade:not([class*="tier-"]) .grade-pct {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}

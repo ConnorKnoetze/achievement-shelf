@@ -1,0 +1,375 @@
+/* Shared ground for the setup windows (trophy picker and settings). They are the
+   workbench behind the shelf: graphite anodised ground, machined hairlines, the same
+   rail and printed grade labels as the shelf, and brass for "on the trophy shelf". */
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-600-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-600-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-700-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/barlow-condensed-700-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --ground: #131518;
+  --bench: #0c0e10;
+  --panel: #1a1d21;
+  --panel-hover: #22262b;
+  --line: #2a2f35;
+  --line-strong: #3a4048;
+  --text: #ebe8e1;
+  --muted: #9ba2aa;
+  --brass: #e2c07a;
+  --brass-dark: #8a642a;
+  --card: #f4f2ec;
+  --ink: #16181b;
+  --ink-muted: #565b62;
+  --rail-top: #34383e;
+  --rail-face: #17191c;
+  --rail-base: #0a0b0d;
+  --grade-face: "Barlow Condensed", "Segoe UI", system-ui, sans-serif;
+  --lift: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+::selection {
+  background: rgba(226, 192, 122, 0.35);
+  color: var(--text);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 5px;
+  background: var(--line-strong) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4b525b padding-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* Numerals set like the printed grade. */
+.figure {
+  font-family: var(--grade-face);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Buttons and fields: machined, small radius, one hairline. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #4b525b;
+  background: var(--panel-hover);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--bench);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.field svg {
+  position: absolute;
+  left: 9px;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.input,
+.select {
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bench);
+  color: var(--text);
+  font: inherit;
+  transition: border-color 0.15s;
+}
+
+.input {
+  width: 100%;
+  padding: 0 9px;
+}
+
+.field svg + .input {
+  padding-left: 29px;
+}
+
+.input::placeholder {
+  color: #7d848c;
+}
+
+.input:hover,
+.select:hover {
+  border-color: #4b525b;
+}
+
+.input:focus-visible,
+.select:focus-visible {
+  outline: none;
+  border-color: var(--brass);
+  box-shadow: 0 0 0 1px var(--brass);
+}
+
+.input::-webkit-search-cancel-button {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ba2aa' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E") center / contain no-repeat;
+  cursor: pointer;
+}
+
+.select {
+  appearance: none;
+  padding: 0 28px 0 9px;
+  background: var(--bench) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ba2aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") right 8px center / 14px no-repeat;
+  cursor: pointer;
+}
+
+.select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+/* Errors print on a card-stock slip, like the shelf's placards. */
+.status {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 3px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 5px 9px -3px rgba(0, 0, 0, 0.5);
+}
+
+.status[hidden] {
+  display: none;
+}
+
+/* The rail, drawn exactly as on the shelf. */
+.rail {
+  position: relative;
+  z-index: 1;
+  height: 12px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to bottom,
+    var(--rail-top) 0 1px,
+    #23262a 1px 4px,
+    var(--rail-face) 4px calc(100% - 2px),
+    var(--rail-base) calc(100% - 2px)
+  );
+  box-shadow: 0 5px 9px -2px rgba(0, 0, 0, 0.55);
+}
+
+.rail::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 12px;
+  right: 12px;
+  height: 3px;
+  border-radius: 1px;
+  background: #050506;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.rail.trophy {
+  background:
+    linear-gradient(to bottom, transparent 0 calc(100% - 5px), var(--brass) calc(100% - 5px), var(--brass-dark)),
+    linear-gradient(
+      to bottom,
+      var(--rail-top) 0 1px,
+      #23262a 1px 4px,
+      var(--rail-face) 4px calc(100% - 2px),
+      var(--rail-base) calc(100% - 2px)
+    );
+}
+
+/* Clear acrylic, as on the shelf's slabs. */
+.acrylic {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.1) 38%, rgba(255, 255, 255, 0.04) 62%, rgba(255, 255, 255, 0.16)),
+    rgba(18, 22, 28, 0.22);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.2),
+    0 6px 10px -3px rgba(0, 0, 0, 0.5);
+}
+
+/* The printed grade: tier block in the tier colour, then the percentage on card stock. */
+.grade {
+  --tier: var(--card);
+  display: flex;
+  overflow: hidden;
+  border-radius: 2px;
+  font-family: var(--grade-face);
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.grade-tier {
+  background: var(--tier);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.grade-pct {
+  background: var(--card);
+  font-weight: 600;
+}
+
+.grade:not([class*="tier-"]) .grade-tier {
+  color: var(--ink-muted);
+}
+
+.tier-common {
+  --tier: #c9c2b6;
+}
+
+.tier-uncommon {
+  --tier: #7fd38a;
+}
+
+.tier-rare {
+  --tier: #6cb4f5;
+}
+
+.tier-epic {
+  --tier: #c79bff;
+}
+
+.tier-legendary {
+  --tier: #ffb347;
+}
+
+/* A new piece drops into its slot. */
+@keyframes slot-in {
+  from {
+    transform: translateY(-40px);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(2px);
+    opacity: 1;
+  }
+  to {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01s !important;
+    transition-duration: 0.01s !important;
+  }
+}

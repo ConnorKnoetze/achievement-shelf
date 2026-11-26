@@ -16,25 +16,26 @@ use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use achievement::{game_key, Achievement, Source};
 use gog::GogPaths;
 use rarity::RarityCache;
-use settings::{Settings, TrophyKey, MAX_LEVELS, PER_ROW};
+use settings::{Settings, TrophyKey, MAX_LEVELS, MAX_SCALE, MIN_SCALE, PER_ROW};
 use steam::SteamPaths;
 
-// Window layout in logical pixels; must match the sizes in src/shelf.css.
+// Shelf layout in CSS pixels; must match the sizes in src/shelf.css.
 const SHELF_WIDTH: f64 = 520.0;
 const ROW_HEIGHT: f64 = 112.0;
-/// Empty space above the shelf where hover cards (game banner included) are drawn.
-const TOOLTIP_SPACE: f64 = 280.0;
 const PICKER_LABEL: &str = "picker";
 const SETTINGS_LABEL: &str = "settings";
 /// Sent with a fresh [`SettingsView`] whenever a setting changes, from the tray or the settings window.
 const SETTINGS_EVENT: &str = "settings-changed";
+/// Sent with the new level counts as soon as they change, so the shelf can lay them out
+/// before the full redraw that follows reaches it.
+const LAYOUT_EVENT: &str = "shelf-layout";
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 struct HitRect {
@@ -54,7 +55,7 @@ struct AppState {
     names: Mutex<HashMap<String, String>>,
     /// Steam rarities fetched from the Web API.
     rarity: RarityCache,
-    /// Shelf area in the window, in logical pixels. Outside it, clicks pass through.
+    /// Shelf area in the window, in physical pixels. Outside it, clicks pass through.
     hit_rect: Arc<Mutex<Option<HitRect>>>,
 }
 
@@ -322,6 +323,33 @@ fn set_trophy(
     Ok(trophies)
 }
 
+/// Reorders the trophies shown on the shelf. `order` must hold the same keys as some of
+/// the saved trophies; they are put back in the positions those keys held, so trophies
+/// not shown (missing from disk, or past the shelf's capacity) keep their places.
+#[tauri::command]
+fn reorder_trophies(app: AppHandle, state: State<'_, AppState>, order: Vec<TrophyKey>) -> Result<(), String> {
+    {
+        let mut settings = state.settings.lock().unwrap();
+        let slots: Vec<usize> = settings
+            .trophies
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| order.contains(key))
+            .map(|(i, _)| i)
+            .collect();
+        let distinct = order.iter().enumerate().all(|(i, key)| !order[..i].contains(key));
+        if slots.len() != order.len() || !distinct {
+            return Err("The trophy shelf changed; try again.".into());
+        }
+        for (slot, key) in slots.into_iter().zip(order) {
+            settings.trophies[slot] = key;
+        }
+        settings.save(&state.settings_path);
+    }
+    let _ = app.emit(watch::UPDATED_EVENT, ());
+    Ok(())
+}
+
 #[tauri::command]
 fn clear_trophies(app: AppHandle, state: State<'_, AppState>) {
     {
@@ -337,27 +365,73 @@ fn set_hit_rect(state: State<'_, AppState>, rect: HitRect) {
     *state.hit_rect.lock().unwrap() = Some(rect);
 }
 
-/// Sizes the window for the row count (trophy row included) and puts it in the
-/// bottom-right corner, above the taskbar.
-fn place_window(window: &WebviewWindow, rows: usize) -> tauri::Result<()> {
-    let monitor = match window.primary_monitor()? {
-        Some(m) => m,
-        None => match window.current_monitor()? {
-            Some(m) => m,
-            None => return Ok(()),
-        },
+/// The chosen display, or the main one if none was chosen or it is not connected.
+fn shelf_monitor(window: &WebviewWindow, display: Option<&str>) -> tauri::Result<Option<Monitor>> {
+    if let Some(name) = display {
+        if let Some(m) = window.available_monitors()?.into_iter().find(|m| m.name().is_some_and(|n| n == name)) {
+            return Ok(Some(m));
+        }
+    }
+    Ok(match window.primary_monitor()? {
+        Some(m) => Some(m),
+        None => window.current_monitor()?,
+    })
+}
+
+/// Page zoom at which a shelf of [`MAX_LEVELS`] levels fills the height of `monitor`'s work
+/// area, with its top level at the top of the screen. This is the shelf's 100% size.
+fn fit_zoom(monitor: &Monitor) -> f64 {
+    let height = monitor.work_area().size.height as f64 / monitor.scale_factor();
+    height / (MAX_LEVELS as f64 * ROW_HEIGHT)
+}
+
+/// Zooms the page so the shelf is drawn at the settings' scale on `monitor`.
+fn apply_zoom(window: &WebviewWindow, monitor: &Monitor, settings: &Settings) -> tauri::Result<()> {
+    window.set_zoom(settings.scale * fit_zoom(monitor))
+}
+
+/// Zooms the shelf for its scale on the chosen display, after moving the window there.
+fn apply_scale(window: &WebviewWindow, settings: &Settings) -> tauri::Result<()> {
+    match shelf_monitor(window, settings.display.as_deref())? {
+        Some(monitor) => apply_zoom(window, &monitor, settings),
+        None => Ok(()),
+    }
+}
+
+/// Puts the window in the bottom-right corner of the chosen display, above the taskbar, and
+/// zooms the page for the shelf scale.
+///
+/// The window is the size of the largest shelf (every level, at the largest scale) whatever the
+/// settings, and it is click-through outside the shelf. So changing the scale or the levels only
+/// zooms or redraws the page. Resizing and moving the window instead shows each step as a
+/// separate frame, and the shelf jumps around on every change.
+fn place_window(window: &WebviewWindow, settings: &Settings) -> tauri::Result<()> {
+    let Some(monitor) = shelf_monitor(window, settings.display.as_deref())? else {
+        return Ok(());
     };
-    let scale = monitor.scale_factor();
-    let width = (SHELF_WIDTH * scale).round() as u32;
     let area = monitor.work_area();
-    // Ten levels can be taller than the screen; the shelf is drawn from the bottom up, so the
-    // top of it (the tooltip space first) is cut off rather than the window leaving the screen.
-    let height = (((TOOLTIP_SPACE + rows as f64 * ROW_HEIGHT) * scale).round() as u32).min(area.size.height);
-    window.set_size(PhysicalSize::new(width, height))?;
-    window.set_position(PhysicalPosition::new(
+    let width = (SHELF_WIDTH * monitor.scale_factor() * MAX_SCALE * fit_zoom(&monitor)).round() as u32;
+    // Every level at the largest scale fills the work area's height (see `fit_zoom`).
+    let height = area.size.height;
+    // Moves onto the display before sizing: crossing to a display with another scale makes
+    // Windows rescale the window, which would undo a size set first. On the same display that
+    // move would only make the shelf jump, so it is skipped.
+    let same_display = window.current_monitor()?.is_some_and(|m| m.name() == monitor.name());
+    if !same_display {
+        window.set_position(area.position)?;
+    }
+    let size = PhysicalSize::new(width, height);
+    if window.inner_size()? != size {
+        window.set_size(size)?;
+    }
+    let position = PhysicalPosition::new(
         area.position.x + area.size.width as i32 - width as i32,
         area.position.y + area.size.height as i32 - height as i32,
-    ))
+    );
+    if window.outer_position()? != position {
+        window.set_position(position)?;
+    }
+    apply_zoom(window, &monitor, settings)
 }
 
 fn apply_layer(window: &WebviewWindow, on_top: bool) -> tauri::Result<()> {
@@ -378,13 +452,11 @@ fn spawn_hit_test(window: WebviewWindow, hit_rect: Arc<Mutex<Option<HitRect>>>) 
         let mut last: Option<bool> = None;
         loop {
             std::thread::sleep(Duration::from_millis(50));
-            let (Ok(cursor), Ok(origin), Ok(scale)) =
-                (window.cursor_position(), window.inner_position(), window.scale_factor())
-            else {
+            let (Ok(cursor), Ok(origin)) = (window.cursor_position(), window.inner_position()) else {
                 continue;
             };
-            let x = (cursor.x - origin.x as f64) / scale;
-            let y = (cursor.y - origin.y as f64) / scale;
+            let x = cursor.x - origin.x as f64;
+            let y = cursor.y - origin.y as f64;
             let inside = hit_rect.lock().unwrap().is_some_and(|r| {
                 x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height
             });
@@ -415,7 +487,7 @@ fn open_picker(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn open_settings(app: &AppHandle) -> tauri::Result<()> {
-    open_window(app, SETTINGS_LABEL, "settings.html", "Achievement Shelf settings", (420.0, 450.0), (380.0, 420.0))
+    open_window(app, SETTINGS_LABEL, "settings.html", "Achievement Shelf settings", (420.0, 600.0), (380.0, 560.0))
 }
 
 /// Tray check items that mirror settings the settings window can also change.
@@ -431,6 +503,12 @@ struct SettingsView {
     rows: usize,
     trophy_rows: usize,
     max_levels: usize,
+    /// Name of the chosen display; empty for the main display.
+    display: String,
+    displays: Vec<DisplayOption>,
+    scale: f64,
+    min_scale: f64,
+    max_scale: f64,
     can_add_row: bool,
     can_remove_recent_row: bool,
     can_remove_trophy_row: bool,
@@ -438,12 +516,45 @@ struct SettingsView {
     autostart: bool,
 }
 
+/// A display the shelf can be put on, for the settings window's list.
+#[derive(Clone, Serialize)]
+struct DisplayOption {
+    name: String,
+    label: String,
+}
+
+/// The connected displays, left to right, plus the chosen one if it is not connected.
+fn display_options(app: &AppHandle, chosen: Option<&str>) -> Vec<DisplayOption> {
+    let mut monitors = app.available_monitors().unwrap_or_default();
+    monitors.sort_by_key(|m| (m.position().x, m.position().y));
+    let primary = app.primary_monitor().ok().flatten().and_then(|m| m.name().cloned());
+    let mut options: Vec<DisplayOption> = monitors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            let name = m.name()?.clone();
+            let size = m.size();
+            let main = if primary.as_ref() == Some(&name) { " (main)" } else { "" };
+            Some(DisplayOption { label: format!("Display {} \u{b7} {} \u{d7} {}{main}", i + 1, size.width, size.height), name })
+        })
+        .collect();
+    if let Some(chosen) = chosen.filter(|c| !options.iter().any(|o| o.name == *c)) {
+        options.push(DisplayOption { name: chosen.to_owned(), label: format!("{chosen} (not connected)") });
+    }
+    options
+}
+
 fn settings_view(app: &AppHandle) -> SettingsView {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     SettingsView {
+        display: settings.display.clone().unwrap_or_default(),
+        displays: display_options(app, settings.display.as_deref()),
         rows: settings.rows,
         trophy_rows: settings.trophy_rows,
         max_levels: MAX_LEVELS,
+        scale: settings.scale,
+        min_scale: MIN_SCALE,
+        max_scale: MAX_SCALE,
         can_add_row: settings.can_add_row(),
         can_remove_recent_row: settings.can_remove_recent_row(),
         can_remove_trophy_row: settings.can_remove_trophy_row(),
@@ -462,7 +573,7 @@ fn settings_changed(app: &AppHandle) {
     let _ = app.emit(SETTINGS_EVENT, view);
 }
 
-/// Adds or removes a recent or trophy row, then resizes the shelf to fit.
+/// Adds or removes a recent or trophy row; the shelf redraws with it.
 fn change_rows(app: &AppHandle, trophy: bool, add: bool) {
     let state = app.state::<AppState>();
     {
@@ -471,12 +582,42 @@ fn change_rows(app: &AppHandle, trophy: bool, add: bool) {
             return;
         }
         settings.save(&state.settings_path);
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = place_window(&window, settings.total_rows());
-        }
+        let _ = app.emit(LAYOUT_EVENT, serde_json::json!({ "rows": settings.rows, "trophyRows": settings.trophy_rows }));
     }
     // Redraws the shelf and updates the picker's trophy capacity.
     let _ = app.emit(watch::UPDATED_EVENT, ());
+    settings_changed(app);
+}
+
+/// Moves the shelf to the named display; an empty name means the main display.
+fn set_display(app: &AppHandle, name: String) {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        settings.display = Some(name).filter(|n| !n.is_empty());
+        settings.save(&state.settings_path);
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(e) = place_window(&window, &settings) {
+                eprintln!("achievement-shelf: could not move the shelf: {e}");
+            }
+        }
+    }
+    settings_changed(app);
+}
+
+/// Resizes the shelf to `scale` times its normal size.
+fn set_scale(app: &AppHandle, scale: f64) {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        settings.set_scale(scale);
+        settings.save(&state.settings_path);
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(e) = apply_scale(&window, &settings) {
+                eprintln!("achievement-shelf: could not resize the shelf: {e}");
+            }
+        }
+    }
     settings_changed(app);
 }
 
@@ -513,6 +654,18 @@ fn change_shelf_rows(app: AppHandle, trophy: bool, add: bool) -> SettingsView {
 }
 
 #[tauri::command]
+fn set_shelf_display(app: AppHandle, name: String) -> SettingsView {
+    set_display(&app, name);
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn set_shelf_scale(app: AppHandle, scale: f64) -> SettingsView {
+    set_scale(&app, scale);
+    settings_view(&app)
+}
+
+#[tauri::command]
 fn set_keep_on_top(app: AppHandle, value: bool) -> SettingsView {
     set_on_top(&app, value);
     settings_view(&app)
@@ -527,6 +680,7 @@ fn set_start_with_windows(app: AppHandle, value: bool) -> Result<SettingsView, S
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         "refresh" => {
+            icons::forget_misses();
             let _ = app.emit(watch::UPDATED_EVENT, ());
         }
         "choose_trophies" => {
@@ -692,7 +846,7 @@ pub fn run() {
                 hit_rect: hit_rect.clone(),
             });
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");
-            place_window(&window, settings.total_rows())?;
+            place_window(&window, &settings)?;
             apply_layer(&window, settings.on_top)?;
             window.set_ignore_cursor_events(true)?;
             window.show()?;
@@ -709,10 +863,13 @@ pub fn run() {
             get_unlocked,
             get_icon,
             set_trophy,
+            reorder_trophies,
             clear_trophies,
             set_hit_rect,
             get_settings,
             change_shelf_rows,
+            set_shelf_display,
+            set_shelf_scale,
             set_keep_on_top,
             set_start_with_windows
         ])

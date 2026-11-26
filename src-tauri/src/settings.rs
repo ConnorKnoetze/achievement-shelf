@@ -12,6 +12,10 @@ pub const MAX_LEVELS: usize = 10;
 pub const MIN_TROPHY_ROWS: usize = 1;
 /// Most trophies kept in settings: every level as a trophy row except the minimum recent (none).
 const MAX_STORED_TROPHIES: usize = MAX_LEVELS * PER_ROW;
+/// Shelf size, as a share of the largest that fits its display: at 1, a shelf of
+/// [`MAX_LEVELS`] levels reaches the top of the screen. The shelf starts at the largest.
+pub const MIN_SCALE: f64 = 0.5;
+pub const MAX_SCALE: f64 = 1.0;
 
 /// Identifies one achievement across games and launchers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +58,11 @@ pub struct Settings {
     pub trophy_rows: usize,
     /// Keep the shelf above other windows instead of on the desktop.
     pub on_top: bool,
+    /// Name of the display the shelf sits on, as Windows reports it. `None` is the main display,
+    /// which is also used while the chosen one is not connected.
+    pub display: Option<String>,
+    /// Shelf size, from [`MIN_SCALE`] to [`MAX_SCALE`] of the largest that fits the display.
+    pub scale: f64,
     /// Achievements the user chose for the trophy shelf, in display order. Ones past the
     /// trophy rows' capacity are kept, so removing a row and adding it back restores them.
     pub trophies: Vec<TrophyKey>,
@@ -61,7 +70,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { rows: 1, trophy_rows: MIN_TROPHY_ROWS, on_top: false, trophies: Vec::new() }
+        Self { rows: 1, trophy_rows: MIN_TROPHY_ROWS, on_top: false, display: None, scale: MAX_SCALE, trophies: Vec::new() }
     }
 }
 
@@ -72,6 +81,7 @@ impl Settings {
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
         settings.clamp_rows();
+        settings.set_scale(settings.scale);
         settings.trophies.truncate(MAX_STORED_TROPHIES);
         settings
     }
@@ -79,6 +89,11 @@ impl Settings {
     fn clamp_rows(&mut self) {
         self.trophy_rows = self.trophy_rows.clamp(MIN_TROPHY_ROWS, MAX_LEVELS);
         self.rows = self.rows.min(MAX_LEVELS - self.trophy_rows);
+    }
+
+    /// Sets the shelf scale, kept within the limits (a bad value gives the default, the largest).
+    pub fn set_scale(&mut self, scale: f64) {
+        self.scale = if scale.is_finite() { scale.clamp(MIN_SCALE, MAX_SCALE) } else { MAX_SCALE };
     }
 
     /// Rows the window must fit: recent and trophy rows.
@@ -170,6 +185,20 @@ mod tests {
         assert!(settings.change_rows(true, -1));
         assert!(settings.change_rows(false, 1));
         assert_eq!((settings.rows, settings.trophy_rows), (1, MAX_LEVELS - 1));
+    }
+
+    #[test]
+    fn scale_stays_within_the_limits() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.scale, MAX_SCALE, "the shelf starts at the largest");
+        settings.set_scale(4.0);
+        assert_eq!(settings.scale, MAX_SCALE);
+        settings.set_scale(0.0);
+        assert_eq!(settings.scale, MIN_SCALE);
+        settings.set_scale(0.75);
+        assert_eq!(settings.scale, 0.75);
+        settings.set_scale(f64::NAN);
+        assert_eq!(settings.scale, MAX_SCALE, "a bad value gives the default");
     }
 
     #[test]

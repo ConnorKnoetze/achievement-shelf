@@ -7,20 +7,44 @@
     <link rel="stylesheet" href="/src/picker.css" />
   </head>
   <body>
-    <header class="bar">
-      <div class="bar-title">
-        <h1>Trophy shelf</h1>
-        <span id="count" class="count"></span>
+    <header class="bench">
+      <div class="bench-head">
+        <div class="bench-title">
+          <h1>Trophy shelf</h1>
+          <p id="hint" class="hint">Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.</p>
+        </div>
+        <span class="count"><span id="count" class="figure"></span> placed</span>
+        <button id="clear" class="btn" type="button">Clear shelf</button>
       </div>
-      <input id="search" class="search" type="search" placeholder="Search achievements or games" autocomplete="off" />
-      <button id="clear" class="clear" type="button">Clear all</button>
+      <div id="rails" class="rails" role="list" aria-label="Your trophy rail"></div>
     </header>
-    <p class="hint">Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.</p>
-    <p id="status" class="status" hidden></p>
-    <div id="tabs" class="tabs" role="tablist" aria-label="Launcher"></div>
+
+    <div class="toolbar">
+      <div id="tabs" class="tabs" role="tablist" aria-label="Launcher"></div>
+      <label class="field search-field">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" />
+        </svg>
+        <input id="search" class="input" type="search" placeholder="Search achievements or games" autocomplete="off" aria-label="Search achievements or games" />
+      </label>
+      <label class="sort">
+        <span class="muted">Sort</span>
+        <select id="sort" class="select">
+          <option value="newest">Newest unlocks</option>
+          <option value="rarest">Rarest first</option>
+        </select>
+      </label>
+    </div>
+    <p id="status" class="status" role="alert" hidden></p>
+
     <div class="content">
       <aside class="sidebar" aria-label="Games">
-        <input id="game-filter" class="game-filter" type="search" placeholder="Filter games" autocomplete="off" />
+        <label class="field game-filter">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" />
+          </svg>
+          <input id="game-filter" class="input" type="search" placeholder="Filter games" autocomplete="off" aria-label="Filter games" />
+        </label>
         <nav id="games" class="games"></nav>
       </aside>
       <main id="list" class="list" role="tabpanel"></main>

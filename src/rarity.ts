@@ -7,13 +7,37 @@ const TIERS: { min: number; name: string }[] = [
   { min: 0, name: "Legendary" },
 ];
 
-/** A span such as "Epic · 1.8%", coloured by tier, or null when the rarity is unknown. */
-export function rarityLabel(percent: number | null): HTMLSpanElement | null {
+function findTier(percent: number) {
+  return TIERS.find((t) => percent >= t.min) ?? TIERS[TIERS.length - 1];
+}
+
+/** The lowercase tier name such as "epic", or null when the rarity is unknown. */
+export function rarityTier(percent: number | null): string | null {
   if (percent === null || !Number.isFinite(percent)) return null;
-  const tier = TIERS.find((t) => percent >= t.min) ?? TIERS[TIERS.length - 1];
-  const span = document.createElement("span");
-  span.className = `rarity rarity-${tier.name.toLowerCase()}`;
-  span.textContent = `${tier.name} · ${percent.toFixed(1)}%`;
-  span.title = `${percent.toFixed(1)}% of players have this achievement`;
-  return span;
+  return findTier(percent).name.toLowerCase();
+}
+
+/**
+ * The printed grade label used in the setup windows: a tier block over or beside the
+ * unlock percentage. Achievements without a known rarity are "Ungraded".
+ */
+export function gradeLabel(percent: number | null, className: string): HTMLSpanElement {
+  const tier = rarityTier(percent);
+  const label = document.createElement("span");
+  label.className = className;
+  const tierEl = document.createElement("span");
+  tierEl.className = "grade-tier";
+  tierEl.textContent = tier ?? "Ungraded";
+  const pctEl = document.createElement("span");
+  pctEl.className = "grade-pct";
+  if (tier && percent !== null) {
+    label.classList.add(`tier-${tier}`);
+    pctEl.textContent = `${percent.toFixed(1)}%`;
+    label.title = `${percent.toFixed(1)}% of players have this achievement`;
+  } else {
+    pctEl.textContent = "—";
+    label.title = "No rarity data for this achievement";
+  }
+  label.append(tierEl, pctEl);
+  return label;
 }

@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { rarityLabel } from "./rarity";
+import { gradeLabel } from "./rarity";
 
 type Source = "steam" | "gog";
+type Sort = "newest" | "rarest";
 
 interface PickerItem {
   source: Source;
@@ -35,11 +36,19 @@ const TABS: { source: Source; label: string; missing: string }[] = [
   { source: "gog", label: "GOG", missing: "GOG Galaxy not found on this PC" },
 ];
 const TAB_STORAGE_KEY = "picker-tab";
+const SORT_STORAGE_KEY = "picker-sort";
+/** Slabs per rail; matches PER_ROW in src-tauri/src/settings.rs. */
+const PER_RAIL = 6;
+const HINT_EMPTY = "Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.";
+const HINT_PLACED = "Click a trophy on the rail to take it off the shelf.";
 
 const listEl = document.getElementById("list") as HTMLElement;
 const countEl = document.getElementById("count") as HTMLSpanElement;
+const hintEl = document.getElementById("hint") as HTMLParagraphElement;
+const railsEl = document.getElementById("rails") as HTMLElement;
 const statusEl = document.getElementById("status") as HTMLParagraphElement;
 const searchEl = document.getElementById("search") as HTMLInputElement;
+const sortEl = document.getElementById("sort") as HTMLSelectElement;
 const clearEl = document.getElementById("clear") as HTMLButtonElement;
 const tabsEl = document.getElementById("tabs") as HTMLElement;
 const gamesEl = document.getElementById("games") as HTMLElement;
@@ -48,20 +57,32 @@ const gameFilterEl = document.getElementById("game-filter") as HTMLInputElement;
 /** Sidebar key for the "All games" entry. */
 const ALL_GAMES = "";
 
+/** Drawn cup for achievements without an icon, as on the shelf. */
+const FALLBACK_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4.5a2.5 2.5 0 0 0 2.9 3.9M17 6h2.5a2.5 2.5 0 0 1-2.9 3.9"/>' +
+  '<path d="M12 14v4M8.5 20h7"/></svg>';
+
 let maxTrophies = 6;
 let launchers: Source[] = [];
 let items: PickerItem[] = [];
+let itemsByKey = new Map<string, PickerItem>();
 let trophies: TrophyKey[] = [];
 let chosen = new Set<string>();
+/** Trophies drawn on the rail last time, so newly placed ones can drop into their slot. */
+let railKeys: Set<string> | null = null;
 /** The launcher tab shown, or null until the first load picks one. */
 let selectedSource: Source | null = null;
 /** The game picked in the sidebar (a game key), or ALL_GAMES. */
 let selectedGame = ALL_GAMES;
+let sort: Sort = storedSort();
 /** Cards by achievement key, so toggling only updates classes instead of re-rendering. */
 const cards = new Map<string, HTMLButtonElement>();
 /** Sidebar buttons by game key (ALL_GAMES for the first entry). */
 const gameButtons = new Map<string, HTMLButtonElement>();
 const tabButtons = new Map<Source, HTMLButtonElement>();
+/** Icon URLs by achievement key; null when the launcher has no icon. */
+const iconCache = new Map<string, Promise<string | null>>();
 let statusTimer: number | undefined;
 
 const gameKeyOf = (item: TrophyKey) => `${item.source}:${item.gameId}`;
@@ -72,6 +93,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
   node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+function tick() {
+  return el("span", "tick");
 }
 
 function formatDate(unix: number): string {
@@ -86,26 +111,122 @@ function showStatus(text: string) {
   statusTimer = window.setTimeout(() => (statusEl.hidden = true), 4000);
 }
 
-function storedTab(): Source | null {
+function readStored(key: string): string | null {
   try {
-    const value = localStorage.getItem(TAB_STORAGE_KEY);
-    return TABS.some((t) => t.source === value) ? (value as Source) : null;
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function storeTab(source: Source) {
+function writeStored(key: string, value: string) {
   try {
-    localStorage.setItem(TAB_STORAGE_KEY, source);
+    localStorage.setItem(key, value);
   } catch {
-    // Remembering the tab is only a convenience.
+    // Remembering the view is only a convenience.
   }
+}
+
+function storedTab(): Source | null {
+  const value = readStored(TAB_STORAGE_KEY);
+  return TABS.some((t) => t.source === value) ? (value as Source) : null;
+}
+
+function storedSort(): Sort {
+  return readStored(SORT_STORAGE_KEY) === "rarest" ? "rarest" : "newest";
 }
 
 /** Items of the selected launcher; the sidebar, list, and search only cover these. */
 function tabItems(): PickerItem[] {
   return items.filter((i) => i.source === selectedSource);
+}
+
+function iconFor(item: PickerItem): Promise<string | null> {
+  const key = keyOf(item);
+  let url = iconCache.get(key);
+  if (!url) {
+    url = invoke<string | null>("get_icon", { source: item.source, gameId: item.gameId, icon: item.icon }).catch(() => null);
+    iconCache.set(key, url);
+  }
+  return url;
+}
+
+/** A dark insert holding the icon, or the drawn cup when there is none. */
+function insert(item: PickerItem | undefined, lazy: boolean): HTMLElement {
+  const box = el("span", "insert");
+  if (!item) {
+    box.innerHTML = FALLBACK_ICON;
+    return box;
+  }
+  const img = el("img", "");
+  img.alt = "";
+  img.draggable = false;
+  box.append(img);
+  if (lazy) {
+    img.dataset.key = keyOf(item);
+    iconObserver.observe(img);
+  } else {
+    void showIcon(img, item);
+  }
+  return box;
+}
+
+async function showIcon(img: HTMLImageElement, item: PickerItem) {
+  const url = await iconFor(item);
+  if (url) {
+    img.src = url;
+  } else {
+    img.remove();
+    img.parentElement?.insertAdjacentHTML("beforeend", FALLBACK_ICON);
+  }
+}
+
+/** Icons are loaded only when a card scrolls into view; a library can hold thousands. */
+const iconObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const img = entry.target as HTMLImageElement;
+      iconObserver.unobserve(img);
+      const item = itemsByKey.get(img.dataset.key ?? "");
+      if (item) void showIcon(img, item);
+    }
+  },
+  { root: listEl, rootMargin: "300px" },
+);
+
+/** Draws the trophy rails: placed trophies in order, then empty slots up to the capacity. */
+function renderRails() {
+  const previous = railKeys;
+  const placed = trophies.slice(0, maxTrophies);
+  railKeys = new Set(placed.map(keyOf));
+  const railCount = Math.max(1, Math.ceil(maxTrophies / PER_RAIL));
+  const rails: HTMLElement[] = [];
+  for (let r = 0; r < railCount; r++) {
+    const slots = el("div", "mini-slots");
+    for (let i = r * PER_RAIL; i < (r + 1) * PER_RAIL && i < maxTrophies; i++) {
+      const key = placed[i];
+      if (!key) {
+        slots.append(el("span", "pslot"));
+        continue;
+      }
+      const item = itemsByKey.get(keyOf(key));
+      const isNew = previous !== null && !previous.has(keyOf(key));
+      const slab = el("button", isNew ? "pslab acrylic new" : "pslab acrylic");
+      slab.type = "button";
+      const title = item ? item.title || item.apiName : "An achievement no longer found";
+      slab.title = `${title}\nClick to take it off the shelf`;
+      slab.setAttribute("aria-label", `Remove ${title} from the shelf`);
+      slab.append(gradeLabel(item?.rarity ?? null, "grade pslab-grade"), insert(item, false));
+      slab.addEventListener("click", () => void setTrophy(key, false));
+      slots.append(slab);
+    }
+    const rail = el("div", "mini-rail");
+    rail.setAttribute("role", "listitem");
+    rail.append(slots, el("div", "rail trophy"));
+    rails.push(rail);
+  }
+  railsEl.replaceChildren(...rails);
 }
 
 function updateChosen(keys: TrophyKey[]) {
@@ -123,34 +244,16 @@ function updateChosen(keys: TrophyKey[]) {
   for (const [source, button] of tabButtons) {
     button.classList.toggle("has-trophy", keys.some((k) => k.source === source));
   }
-  countEl.textContent = `${chosen.size} / ${maxTrophies} chosen`;
+  countEl.textContent = `${Math.min(chosen.size, maxTrophies)} / ${maxTrophies}`;
+  hintEl.textContent = chosen.size ? HINT_PLACED : HINT_EMPTY;
   clearEl.disabled = chosen.size === 0;
+  renderRails();
 }
 
-/** Icons are loaded only when a card scrolls into view; a library can hold thousands. */
-const iconObserver = new IntersectionObserver(
-  (entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const img = entry.target as HTMLImageElement;
-      iconObserver.unobserve(img);
-      const { source, gameId, icon } = img.dataset;
-      invoke<string | null>("get_icon", { source, gameId, icon })
-        .then((url) => {
-          if (url) img.src = url;
-          else img.classList.add("missing");
-        })
-        .catch(() => img.classList.add("missing"));
-    }
-  },
-  { root: listEl, rootMargin: "300px" },
-);
-
-async function toggle(item: PickerItem) {
-  const trophy = !chosen.has(keyOf(item));
+async function setTrophy(key: TrophyKey, trophy: boolean) {
   try {
     const keys = await invoke<TrophyKey[]>("set_trophy", {
-      key: { source: item.source, gameId: item.gameId, apiName: item.apiName },
+      key: { source: key.source, gameId: key.gameId, apiName: key.apiName },
       trophy,
     });
     updateChosen(keys);
@@ -159,28 +262,22 @@ async function toggle(item: PickerItem) {
   }
 }
 
-function renderCard(item: PickerItem): HTMLButtonElement {
+function renderCard(item: PickerItem, showGame: boolean): HTMLButtonElement {
   const card = el("button", "card");
   card.type = "button";
-  const img = el("img", "card-icon");
-  img.alt = "";
-  img.draggable = false;
-  img.dataset.source = item.source;
-  img.dataset.gameId = item.gameId;
-  img.dataset.icon = item.icon;
-  iconObserver.observe(img);
-
-  const date = el("div", "card-date", formatDate(item.unlockedAt));
-  const rarity = rarityLabel(item.rarity);
-  if (rarity) date.append(" · ", rarity);
+  const onShelf = el("span", "on-shelf");
+  onShelf.append(tick(), "On shelf");
+  const head = el("div", "card-head");
+  head.append(el("span", "card-title", item.title || item.apiName), onShelf);
+  // The footer reads like the shelf's certificate: date on the left, printed grade on the right.
+  const meta = el("span", "card-meta", formatDate(item.unlockedAt));
+  if (showGame) meta.append(` · ${item.gameName}`);
+  const foot = el("div", "card-foot");
+  foot.append(meta, gradeLabel(item.rarity, "grade card-grade"));
   const text = el("div", "card-text");
-  text.append(
-    el("div", "card-title", item.title || item.apiName),
-    el("div", "card-desc", item.description || "No description"),
-    date,
-  );
-  card.append(img, text, el("span", "card-badge", "★"));
-  card.addEventListener("click", () => void toggle(item));
+  text.append(head, el("div", "card-desc", item.description || "No description"), foot);
+  card.append(insert(item, true), text);
+  card.addEventListener("click", () => void setTrophy(item, !chosen.has(keyOf(item))));
   return card;
 }
 
@@ -196,12 +293,18 @@ function groupByGame(list: PickerItem[]): Map<string, PickerItem[]> {
   return games;
 }
 
+/** Rarest first; achievements without rarity data go last, newest first among them. */
+function byRarity(a: PickerItem, b: PickerItem): number {
+  if (a.rarity === null || b.rarity === null) return (a.rarity === null ? 1 : 0) - (b.rarity === null ? 1 : 0);
+  return a.rarity - b.rarity;
+}
+
 function selectTab(source: Source, focus = false) {
   if (source !== selectedSource) {
     selectedSource = source;
     selectedGame = ALL_GAMES;
     gameFilterEl.value = "";
-    storeTab(source);
+    writeStored(TAB_STORAGE_KEY, source);
     renderTabs();
     renderSidebar();
     render();
@@ -222,7 +325,7 @@ function renderTabs() {
     button.setAttribute("aria-controls", "list");
     button.tabIndex = selected ? 0 : -1;
     const count = items.filter((i) => i.source === source).length;
-    button.append(el("span", "tab-label", label), el("span", "tab-star", "★"), el("span", "tab-count", String(count)));
+    button.append(el("span", "tab-label", label), el("span", "tab-count", String(count)), tick());
     button.addEventListener("click", () => selectTab(source));
     // Arrow keys move between tabs, as in any tab list.
     button.addEventListener("keydown", (event) => {
@@ -253,7 +356,7 @@ function gameButton(gameKey: string, name: string, count: number): HTMLButtonEle
   button.type = "button";
   button.title = name;
   button.setAttribute("aria-current", String(gameKey === selectedGame));
-  button.append(el("span", "game-button-name", name), el("span", "game-button-star", "★"), el("span", "game-button-count", String(count)));
+  button.append(tick(), el("span", "game-button-name", name), el("span", "game-button-count", String(count)));
   button.addEventListener("click", () => selectGame(gameKey));
   gameButtons.set(gameKey, button);
   return button;
@@ -274,10 +377,10 @@ function renderSidebar() {
 }
 
 function emptyText(list: PickerItem[]): string {
-  if (list.length) return "Nothing matches your search";
+  if (list.length) return "Nothing matches your search. Try a shorter word, or pick All games.";
   const tab = TABS.find((t) => t.source === selectedSource);
   if (tab && !launchers.includes(tab.source)) return tab.missing;
-  return "No unlocked achievements found yet";
+  return "No unlocked achievements found yet. New unlocks show up here as they happen.";
 }
 
 function render() {
@@ -297,22 +400,32 @@ function render() {
     return;
   }
 
-  const games = groupByGame(matches);
-  const sections: HTMLElement[] = [];
-  for (const group of games.values()) {
-    const section = el("section", "game");
-    const heading = el("h2", "game-name", group[0].gameName);
-    heading.append(el("span", "game-count", String(group.length)));
+  const gridOf = (group: PickerItem[], showGame: boolean) => {
     const grid = el("div", "grid");
     for (const item of group) {
-      const card = renderCard(item);
+      const card = renderCard(item, showGame);
       cards.set(keyOf(item), card);
       grid.append(card);
     }
-    section.append(heading, grid);
-    sections.push(section);
+    return grid;
+  };
+
+  if (sort === "rarest") {
+    // One ranked list across games, so the rarest pieces in the library come first.
+    const section = el("section", "flat");
+    section.append(gridOf([...matches].sort(byRarity), selectedGame === ALL_GAMES));
+    listEl.replaceChildren(section);
+  } else {
+    const sections: HTMLElement[] = [];
+    for (const group of groupByGame(matches).values()) {
+      const section = el("section", "game");
+      const heading = el("h2", "game-name", group[0].gameName);
+      heading.append(el("span", "game-count", String(group.length)));
+      section.append(heading, gridOf(group, false));
+      sections.push(section);
+    }
+    listEl.replaceChildren(...sections);
   }
-  listEl.replaceChildren(...sections);
   updateChosen(trophies);
 }
 
@@ -333,6 +446,7 @@ async function load() {
   maxTrophies = data.maxTrophies;
   launchers = data.launchers;
   items = data.items;
+  itemsByKey = new Map(items.map((i) => [keyOf(i), i]));
   trophies = data.trophies;
   // Choosing a trophy also fires an update; only rebuild the lists when the achievements changed.
   if (changed || cards.size === 0) {
@@ -346,6 +460,13 @@ async function load() {
   }
 }
 
+sortEl.value = sort;
+sortEl.addEventListener("change", () => {
+  sort = sortEl.value === "rarest" ? "rarest" : "newest";
+  writeStored(SORT_STORAGE_KEY, sort);
+  render();
+  listEl.scrollTop = 0;
+});
 searchEl.addEventListener("input", render);
 gameFilterEl.addEventListener("input", renderSidebar);
 clearEl.addEventListener("click", () => {

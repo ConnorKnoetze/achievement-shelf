@@ -12,28 +12,41 @@
     <section class="group" aria-labelledby="levels-heading">
       <div class="group-head">
         <h2 id="levels-heading">Shelf levels</h2>
-        <span id="levels-total" class="total"></span>
+        <span class="total"><span id="levels-total" class="figure"></span> levels</span>
       </div>
-      <div class="setting">
-        <div class="setting-text">
-          <span class="setting-label" id="trophy-label">Trophy levels</span>
-          <span class="setting-hint">Gold shelves for the achievements you pick. At least one.</span>
-        </div>
-        <div class="stepper" role="group" aria-labelledby="trophy-label">
-          <button id="trophy-remove" type="button" aria-label="Remove a trophy level">−</button>
-          <output id="trophy-rows" aria-live="polite"></output>
-          <button id="trophy-add" type="button" aria-label="Add a trophy level">+</button>
-        </div>
-      </div>
-      <div class="setting">
-        <div class="setting-text">
-          <span class="setting-label" id="recent-label">Recent levels</span>
-          <span class="setting-hint">Your newest unlocks. Can be none.</span>
-        </div>
-        <div class="stepper" role="group" aria-labelledby="recent-label">
-          <button id="recent-remove" type="button" aria-label="Remove a recent level">−</button>
-          <output id="recent-rows" aria-live="polite"></output>
-          <button id="recent-add" type="button" aria-label="Add a recent level">+</button>
+      <div class="levels">
+        <div id="levels-diagram" class="diagram" aria-hidden="true"></div>
+        <div class="level-controls">
+          <div class="setting">
+            <div class="setting-text">
+              <span class="setting-label" id="trophy-label">Trophy levels</span>
+              <span class="setting-hint">Gold shelves for the achievements you pick. At least one.</span>
+            </div>
+            <div class="stepper" role="group" aria-labelledby="trophy-label">
+              <button id="trophy-remove" type="button" aria-label="Remove a trophy level">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+              </button>
+              <output id="trophy-rows" class="figure" aria-live="polite"></output>
+              <button id="trophy-add" type="button" aria-label="Add a trophy level">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="setting">
+            <div class="setting-text">
+              <span class="setting-label" id="recent-label">Recent levels</span>
+              <span class="setting-hint">Your newest unlocks. Can be none.</span>
+            </div>
+            <div class="stepper" role="group" aria-labelledby="recent-label">
+              <button id="recent-remove" type="button" aria-label="Remove a recent level">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+              </button>
+              <output id="recent-rows" class="figure" aria-live="polite"></output>
+              <button id="recent-add" type="button" aria-label="Add a recent level">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -41,6 +54,21 @@
     <section class="group" aria-labelledby="window-heading">
       <div class="group-head">
         <h2 id="window-heading">Window</h2>
+      </div>
+      <div class="setting">
+        <label class="setting-text" for="display">
+          <span class="setting-label">Display</span>
+          <span class="setting-hint">The shelf sits in its bottom-right corner.</span>
+        </label>
+        <select id="display" class="select"></select>
+      </div>
+      <div class="setting">
+        <label class="setting-text" for="scale">
+          <span class="setting-label">Shelf size</span>
+          <span class="setting-hint">At 100%, ten levels reach the top of the screen.</span>
+        </label>
+        <input id="scale" type="range" step="0.05" />
+        <output id="scale-value" for="scale" class="range-value figure"></output>
       </div>
       <label class="setting toggle">
         <span class="setting-text">
