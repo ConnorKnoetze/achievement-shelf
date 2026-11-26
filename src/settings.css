@@ -285,3 +285,11 @@ input[type="range"]:focus-visible {
   transform: translateX(16px);
   background: var(--ink);
 }
+
+/* The installed version, quiet at the foot of the window. */
+.version {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
