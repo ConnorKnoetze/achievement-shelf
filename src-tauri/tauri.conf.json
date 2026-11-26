@@ -41,7 +41,7 @@
         "https://github.com/connorknoetze/achievement-shelf/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }

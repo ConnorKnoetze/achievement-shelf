@@ -10,7 +10,7 @@ mod watch;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -31,6 +31,13 @@ const SHELF_WIDTH: f64 = 520.0;
 const ROW_HEIGHT: f64 = 112.0;
 const PICKER_LABEL: &str = "picker";
 const SETTINGS_LABEL: &str = "settings";
+const UPDATE_LABEL: &str = "updater";
+/// Sent to the update window with an [`UpdateStatus`].
+const UPDATE_EVENT: &str = "update-status";
+/// How long the shelf waits on the update check before showing anyway.
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+/// The shortest time the update window shows a check that found nothing.
+const UPDATE_CHECK_MIN_SHOWN: Duration = Duration::from_millis(1200);
 /// Sent with a fresh [`SettingsView`] whenever a setting changes, from the tray or the settings window.
 const SETTINGS_EVENT: &str = "settings-changed";
 /// Sent with the new level counts as soon as they change, so the shelf can lay them out
@@ -702,6 +709,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
                 eprintln!("achievement-shelf: {e}");
             }
         }
+        "preview_update" => preview_update_window(app.clone()),
         "quit" => app.exit(0),
         _ => {}
     }
@@ -728,6 +736,11 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
             &quit,
         ],
     )?;
+    // Dev builds never check for updates, so this is the way to see the update window.
+    if cfg!(debug_assertions) {
+        let preview = MenuItem::with_id(app, "preview_update", "Preview update window", true, None::<&str>)?;
+        menu.insert_items(&[&preview, &PredefinedMenuItem::separator(app)?], 7)?;
+    }
 
     let mut tray = TrayIconBuilder::with_id("main").tooltip("Achievement Shelf").menu(&menu);
     if let Some(icon) = app.default_window_icon() {
@@ -817,23 +830,176 @@ fn migrate_old_autostart(app: &AppHandle) {
 #[cfg(not(windows))]
 fn migrate_old_autostart(_app: &AppHandle) {}
 
-/// Checks GitHub Releases for a newer signed build and installs it in the background.
-/// Failures (offline, no release yet) are logged and otherwise ignored.
+/// Where the update check is up to, sent to the update window as [`UPDATE_EVENT`]. The window
+/// starts out showing the check itself.
+#[derive(Clone, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+enum UpdateStatus {
+    Downloading { version: String, downloaded: u64, total: Option<u64> },
+    Installing,
+    Failed,
+}
+
+/// Opens the small window that shows the update check, and any update downloading and
+/// installing, centred on the shelf.
+fn open_update_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    let window = WebviewWindowBuilder::new(app, UPDATE_LABEL, WebviewUrl::App("updater.html".into()))
+        .title("Achievement Shelf")
+        .inner_size(360.0, 150.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .build()?;
+
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let shelf = app.get_webview_window("main");
+    if let Some(monitor) = shelf_monitor(shelf.as_ref().unwrap_or(&window), settings.display.as_deref())? {
+        let area = monitor.work_area();
+        // Moves onto the display first: crossing to one with another scale resizes the window.
+        window.set_position(area.position)?;
+        let size = window.outer_size()?;
+        // The shelves sit in the work area's bottom-right corner, at the page's zoom (see
+        // `place_window` and `apply_zoom`). Worked out here rather than asked of the shelf
+        // page, which may not have drawn yet while its window is hidden.
+        let px = monitor.scale_factor() * settings.scale * fit_zoom(&monitor);
+        let shelf_width = SHELF_WIDTH * px;
+        let shelf_height = settings.total_rows() as f64 * ROW_HEIGHT * px;
+        let (right, bottom) = (area.position.x + area.size.width as i32, area.position.y + area.size.height as i32);
+        let x = (right as f64 - (shelf_width + size.width as f64) / 2.0).round() as i32;
+        let y = (bottom as f64 - (shelf_height + size.height as f64) / 2.0).round() as i32;
+        // Kept on screen, clear of the taskbar, even over a short shelf.
+        window.set_position(PhysicalPosition::new(
+            x.clamp(area.position.x, (right - size.width as i32).max(area.position.x)),
+            y.clamp(area.position.y, (bottom - size.height as i32).max(area.position.y)),
+        ))?;
+    }
+    window.show()?;
+    Ok(window)
+}
+
+/// Waits without holding up the async runtime.
+async fn pause(duration: Duration) {
+    let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(duration)).await;
+}
+
+/// Dev builds only: opens the update window where a real check would, and plays it through
+/// the check, a made-up download, the installing step, and the failure message. Nothing is
+/// downloaded.
+fn preview_update_window(app: AppHandle) {
+    if app.get_webview_window(UPDATE_LABEL).is_some() {
+        return;
+    }
+    let window = match open_update_window(&app) {
+        Ok(window) => window,
+        Err(e) => return eprintln!("achievement-shelf: could not open the update window: {e}"),
+    };
+    std::thread::spawn(move || {
+        let send = |status: UpdateStatus| {
+            let _ = app.emit_to(UPDATE_LABEL, UPDATE_EVENT, status);
+        };
+        let pause = |ms| std::thread::sleep(Duration::from_millis(ms));
+        pause(2000);
+        let total = 8_800_000u64;
+        for step in 0..=50 {
+            let downloaded = total * step / 50;
+            send(UpdateStatus::Downloading { version: "0.0.0-preview".into(), downloaded, total: Some(total) });
+            pause(80);
+        }
+        send(UpdateStatus::Installing);
+        pause(2500);
+        send(UpdateStatus::Failed);
+        pause(5000);
+        let _ = window.close();
+    });
+}
+
+/// Checks GitHub Releases for a newer signed build and installs it, with the update window
+/// showing the check and the update's progress. The installer runs silently, closes the app,
+/// and starts it again. With no update, or if anything fails, the shelf appears instead.
 fn spawn_update_check(app: AppHandle) {
     use tauri_plugin_updater::UpdaterExt;
     tauri::async_runtime::spawn(async move {
-        let result: tauri_plugin_updater::Result<()> = async {
-            let Some(update) = app.updater()?.check().await? else {
-                return Ok(());
-            };
-            eprintln!("achievement-shelf: installing update {}", update.version);
-            update.download_and_install(|_, _| {}, || {}).await?;
-            app.restart();
-        }
-        .await;
+        let opened = Instant::now();
+        let window = open_update_window(&app)
+            .map_err(|e| eprintln!("achievement-shelf: could not open the update window: {e}"))
+            .ok();
+        // Closes the update window and shows the shelf in its place.
+        let finish = |window: Option<WebviewWindow>| {
+            if let Some(window) = window {
+                let _ = window.close();
+            }
+            if let Some(shelf) = app.get_webview_window("main") {
+                if let Err(e) = shelf.show() {
+                    eprintln!("achievement-shelf: could not show the shelf: {e}");
+                }
+            }
+        };
+
+        // The shelf waits for this check, so it gets a short limit.
+        let checked = match app.updater_builder().timeout(UPDATE_CHECK_TIMEOUT).build() {
+            Ok(updater) => updater.check().await,
+            Err(e) => Err(e),
+        };
+        let mut update = match checked {
+            Ok(Some(update)) => update,
+            result => {
+                if let Err(e) = result {
+                    eprintln!("achievement-shelf: update check failed: {e}");
+                }
+                // A quick check would only flash the window; it stays up long enough to read.
+                if let Some(rest) = UPDATE_CHECK_MIN_SHOWN.checked_sub(opened.elapsed()) {
+                    pause(rest).await;
+                }
+                return finish(window);
+            }
+        };
+        // The limit covers the download too, which can take longer on a slow connection.
+        update.timeout = None;
+        eprintln!("achievement-shelf: installing update {}", update.version);
+        let send = |status: UpdateStatus| {
+            let _ = app.emit_to(UPDATE_LABEL, UPDATE_EVENT, status);
+        };
+
+        // Chunks arrive many times a second; only send whole-percent steps.
+        let version = update.version.clone();
+        let mut downloaded = 0u64;
+        let mut last_step = None;
+        let result = update
+            .download(
+                |chunk, total| {
+                    downloaded += chunk as u64;
+                    let step = total.map(|t| downloaded * 100 / t.max(1)).unwrap_or(downloaded >> 18);
+                    if last_step != Some(step) {
+                        last_step = Some(step);
+                        send(UpdateStatus::Downloading { version: version.clone(), downloaded, total });
+                    }
+                },
+                || send(UpdateStatus::Installing),
+            )
+            .await;
+        let result = match result {
+            Ok(bytes) => {
+                // Lets the window show "Installing" before the installer closes the app.
+                pause(Duration::from_millis(900)).await;
+                update.install(bytes)
+            }
+            Err(e) => Err(e),
+        };
         if let Err(e) = result {
-            eprintln!("achievement-shelf: update check failed: {e}");
+            eprintln!("achievement-shelf: update failed: {e}");
+            send(UpdateStatus::Failed);
+            pause(Duration::from_secs(5)).await;
+            return finish(window);
         }
+        // Windows exits inside `install`; elsewhere the new version is in place now.
+        app.restart();
     });
 }
 
@@ -870,7 +1036,11 @@ pub fn run() {
             place_window(&window, &settings)?;
             apply_layer(&window, settings.on_top)?;
             window.set_ignore_cursor_events(true)?;
-            window.show()?;
+            // Release builds show the shelf once the update check is done (`spawn_update_check`),
+            // so it doesn't appear only to vanish when an update installs.
+            if cfg!(debug_assertions) {
+                window.show()?;
+            }
             spawn_hit_test(window, hit_rect.clone());
 
             migrate_old_autostart(app.handle());
