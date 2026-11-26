@@ -817,9 +817,30 @@ fn migrate_old_autostart(app: &AppHandle) {
 #[cfg(not(windows))]
 fn migrate_old_autostart(_app: &AppHandle) {}
 
+/// Checks GitHub Releases for a newer signed build and installs it in the background.
+/// Failures (offline, no release yet) are logged and otherwise ignored.
+fn spawn_update_check(app: AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    tauri::async_runtime::spawn(async move {
+        let result: tauri_plugin_updater::Result<()> = async {
+            let Some(update) = app.updater()?.check().await? else {
+                return Ok(());
+            };
+            eprintln!("achievement-shelf: installing update {}", update.version);
+            update.download_and_install(|_, _| {}, || {}).await?;
+            app.restart();
+        }
+        .await;
+        if let Err(e) = result {
+            eprintln!("achievement-shelf: update check failed: {e}");
+        }
+    });
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
             let settings_path = app.path().app_config_dir()?.join("settings.json");
@@ -855,6 +876,9 @@ pub fn run() {
             migrate_old_autostart(app.handle());
             build_tray(app.handle(), &settings)?;
             watch::spawn(app.handle().clone(), watch_targets());
+            if !cfg!(debug_assertions) {
+                spawn_update_check(app.handle().clone());
+            }
 
             Ok(())
         })
