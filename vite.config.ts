@@ -6,10 +6,10 @@ const page = (name: string) => fileURLToPath(new URL(name, import.meta.url));
 export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
-  // The shelf, trophy picker, and settings are separate windows, each with its own page.
+  // The shelf, trophy picker, settings, and update window are separate windows, each with its own page.
   build: {
     rollupOptions: {
-      input: { main: page("index.html"), picker: page("picker.html"), settings: page("settings.html") },
+      input: { main: page("index.html"), picker: page("picker.html"), settings: page("settings.html"), updater: page("updater.html") },
     },
   },
 });

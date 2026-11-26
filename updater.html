@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Achievement Shelf</title>
+    <link rel="stylesheet" href="/src/updater.css" />
+  </head>
+  <body>
+    <main class="plate">
+      <div class="head">
+        <h1 id="title">Achievement Shelf</h1>
+        <span id="version" class="figure version" hidden></span>
+      </div>
+      <p id="message" class="message">Checking for updates</p>
+      <div
+        id="progress"
+        class="rail progress unknown"
+        role="progressbar"
+        aria-labelledby="message"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <div id="fill" class="fill"></div>
+      </div>
+      <div class="foot">
+        <span id="amount" class="amount"></span>
+        <span id="percent" class="figure percent"></span>
+      </div>
+    </main>
+    <script type="module" src="/src/updater.ts"></script>
+  </body>
+</html>
