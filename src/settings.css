@@ -101,7 +101,10 @@ h1 {
   padding: 0 4px;
 }
 
+/* Long levels squeeze the tiny slabs to fit the drawing's width. */
 .dslab {
+  flex: 0 1 9px;
+  min-width: 0;
   width: 9px;
   height: 12px;
   margin-bottom: -2px;
@@ -241,6 +244,43 @@ input[type="range"]:focus-visible {
   text-align: right;
 }
 
+/* A small square button beside a control, drawn like the stepper's. */
+.icon-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -4px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bench);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--brass);
+}
+
+.icon-btn:disabled {
+  color: var(--line-strong);
+  cursor: default;
+}
+
 .toggle {
   cursor: pointer;
 }
@@ -272,8 +312,21 @@ input[type="range"]:focus-visible {
   transition: transform 0.18s var(--lift), background 0.15s;
 }
 
-.toggle:hover input:not(:checked) {
-  border-color: #4b525b;
+.toggle:hover input:not(:checked, :disabled) {
+  border-color: var(--line-hover);
+}
+
+.toggle:has(input:disabled) {
+  cursor: default;
+}
+
+.toggle:has(input:disabled) .setting-label,
+.toggle input:disabled {
+  opacity: 0.5;
+}
+
+.toggle input:disabled {
+  cursor: default;
 }
 
 .toggle input:checked {
@@ -283,7 +336,21 @@ input[type="range"]:focus-visible {
 
 .toggle input:checked::after {
   transform: translateX(16px);
-  background: var(--ink);
+  background: var(--on-brass);
+}
+
+/* Reset asks for a second click; the armed button warns in brass. Wide enough for both labels,
+   so it keeps its size when armed. */
+#reset {
+  flex: none;
+  justify-content: center;
+  min-width: 84px;
+  white-space: nowrap;
+}
+
+.reset-armed {
+  border-color: var(--brass);
+  color: var(--brass);
 }
 
 /* The installed version, quiet at the foot of the window. */

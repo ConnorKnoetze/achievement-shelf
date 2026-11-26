@@ -57,8 +57,10 @@ body {
   overflow-y: auto;
 }
 
+/* Sized for the shelf's slabs per rail (--per-row), set from the picker's data. */
 .mini-rail {
-  width: 382px;
+  width: calc(22px + 60px * var(--per-row, 6));
+  max-width: 100%;
 }
 
 .mini-slots {
@@ -73,7 +75,8 @@ body {
 /* A compact slab, seated in the rail's slot. Clicking it takes it off the shelf. */
 .pslab {
   position: relative;
-  flex: none;
+  flex: 0 1 50px;
+  min-width: 34px;
   width: 50px;
   height: 71px;
   margin-bottom: -4px;
@@ -138,7 +141,8 @@ body {
 
 /* An empty slot: the outline of where a slab will stand. */
 .pslot {
-  flex: none;
+  flex: 0 1 50px;
+  min-width: 34px;
   width: 50px;
   height: 67px;
   border: 1px dashed rgba(255, 255, 255, 0.14);
@@ -171,6 +175,7 @@ body {
 }
 
 .pslab .insert {
+  position: relative;
   width: 44px;
   height: 44px;
 }
@@ -411,7 +416,7 @@ body {
 
 .card.chosen {
   border-color: rgba(226, 192, 122, 0.7);
-  background: #221f1a;
+  background: var(--chosen);
 }
 
 .card .insert {
@@ -461,6 +466,12 @@ body {
   text-overflow: ellipsis;
   font-size: 11.5px;
   color: var(--muted);
+}
+
+.card-grades {
+  flex: none;
+  display: flex;
+  gap: 4px;
 }
 
 .card-grade {

@@ -35,17 +35,49 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-:root {
+/* The window palette, dark by default. A `.case` is a drawing of the shelf (the picker's
+   bench, the settings' level diagram) and keeps it in light mode too, as the shelf does. */
+:root,
+.case {
   --ground: #131518;
   --bench: #0c0e10;
   --panel: #1a1d21;
   --panel-hover: #22262b;
   --line: #2a2f35;
   --line-strong: #3a4048;
+  --line-hover: #4b525b;
   --text: #ebe8e1;
   --muted: #9ba2aa;
   --brass: #e2c07a;
   --brass-dark: #8a642a;
+  /* What sits on a brass fill, such as a switch's knob. */
+  --on-brass: #16181b;
+  --chosen: #221f1a;
+  color-scheme: dark;
+}
+
+/* Light mode: the same workbench in clear anodised aluminium, with the brass darkened so it
+   still reads as text. Tauri sets the scheme from the theme setting (src-tauri apply_theme). */
+@media (prefers-color-scheme: light) {
+  :root {
+    --ground: #e8e6e1;
+    --bench: #ffffff;
+    --panel: #f7f6f2;
+    --panel-hover: #eeece6;
+    --line: #d9d6ce;
+    --line-strong: #c2bdb2;
+    --line-hover: #a39d91;
+    --text: #1b1d20;
+    --muted: #5d6269;
+    --brass: #8f6620;
+    --brass-dark: #6b4b16;
+    --on-brass: #ffffff;
+    --chosen: #f6eedb;
+    color-scheme: light;
+  }
+}
+
+:root {
   --card: #f4f2ec;
   --ink: #16181b;
   --ink-muted: #565b62;
@@ -54,7 +86,11 @@
   --rail-base: #0a0b0d;
   --grade-face: "Barlow Condensed", "Segoe UI", system-ui, sans-serif;
   --lift: cubic-bezier(0.16, 1, 0.3, 1);
-  color-scheme: dark;
+}
+
+/* Inherited text colour does not pick up a `.case`'s own palette, so set it again. */
+.case {
+  color: var(--text);
 }
 
 * {
@@ -95,7 +131,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b525b padding-box;
+  background: var(--line-hover) padding-box;
 }
 
 :focus-visible {
@@ -147,7 +183,7 @@ h2 {
 }
 
 .btn:hover:not(:disabled) {
-  border-color: #4b525b;
+  border-color: var(--line-hover);
   background: var(--panel-hover);
 }
 
@@ -206,7 +242,7 @@ h2 {
 
 .input:hover,
 .select:hover {
-  border-color: #4b525b;
+  border-color: var(--line-hover);
 }
 
 .input:focus-visible,
@@ -331,23 +367,49 @@ h2 {
 }
 
 .tier-common {
-  --tier: #c9c2b6;
+  --tier: linear-gradient(135deg, #dedad2, #b4afa5 50%, #d6d2c9);
 }
 
 .tier-uncommon {
-  --tier: #7fd38a;
+  --tier: linear-gradient(135deg, #a8e8c8, #56c095 55%, #93dcb8);
 }
 
 .tier-rare {
-  --tier: #6cb4f5;
+  --tier: linear-gradient(135deg, #a6cfff, #5a97ef 50%, #b0d6ff);
 }
 
 .tier-epic {
-  --tier: #c79bff;
+  --tier: linear-gradient(120deg, #dcb0ff, #b07cff 35%, #f394d6 70%, #cda4ff);
 }
 
 .tier-legendary {
-  --tier: #ffb347;
+  --tier: linear-gradient(120deg, #ffd47e, #f2a020 30%, #ffeab0 50%, #e48c14 75%, #ffc65a);
+}
+
+.tier-platinum {
+  --tier: linear-gradient(120deg, #f3f6fa, #c6d0dc 28%, #ffffff 46%, #dce4f4 54%, #b6c1d0 74%, #eef2f7);
+}
+
+/* The platinum label on a slab: a strip printed across the foot of the icon, on the
+   achievement that completed its game. It sits inside the insert so slabs keep their size. */
+.platinum-band {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
+  display: grid;
+  place-items: center;
+  height: 8px;
+  border-radius: 0 0 1px 1px;
+  background: var(--tier);
+  box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.35);
+  font-family: var(--grade-face);
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--ink);
 }
 
 /* A new piece drops into its slot. */

@@ -25,7 +25,7 @@ It reads the user's local Steam and GOG Galaxy achievement data with no account 
 
 ## Capabilities and Constraints
 - There are two kinds of rows: trophy rows (at least 1, picked by the user) and recent-unlock rows (0 or more), up to 10 levels in total and 6 achievements per row.
-- Rarity is the global unlock percentage, sorted into tiers: Common ≥30%, Uncommon ≥10%, Rare ≥2.5%, Epic ≥0.5%, Legendary below that. Some achievements have no rarity.
+- Rarity is the global unlock percentage, sorted into tiers: Common ≥40%, Uncommon ≥15%, Rare ≥5%, Epic ≥1%, Legendary below that. Some achievements have no rarity. When every achievement a game defines is unlocked, the last one unlocked also gets a Platinum label, alongside its rarity tier.
 - Achievement icons are square game-supplied images (usually 64px). Some are missing and fall back to a 🏆.
 - The window size comes from `SHELF_WIDTH` (520) and `ROW_HEIGHT` (112) in `src-tauri/src/lib.rs`, so changing either means a matching Rust change.
 - `backdrop-filter` can't blur the desktop through the transparent window.

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { rarityTier } from "./rarity";
+import { platinumLabel, rarityTier } from "./rarity";
 
 interface ShelfItem {
   source: "steam" | "gog";
@@ -12,6 +12,8 @@ interface ShelfItem {
   icon: string;
   unlockedAt: number;
   rarity: number | null;
+  /** The achievement that completed its game. */
+  platinum: boolean;
   gameName: string;
   iconUrl: string | null;
 }
@@ -124,6 +126,7 @@ function showTooltip(item: ShelfItem, anchor: HTMLElement) {
   head.append(iconInsert(item, "cert-icon", ""), heading);
   children.push(head);
   if (item.description) children.push(el("p", "cert-desc", item.description));
+  if (item.platinum) children.push(platinumLabel("grade cert-grade cert-platinum", "Game completed"));
   children.push(certificateGrade(item));
 
   tooltipEl.classList.toggle("has-banner", Boolean(banner));
@@ -133,15 +136,68 @@ function showTooltip(item: ShelfItem, anchor: HTMLElement) {
   // The slot never moves on hover (only the slab inside it lifts), so this is stable.
   const box = anchor.getBoundingClientRect();
   const width = tooltipEl.offsetWidth;
-  const left = Math.min(Math.max(8, box.left + box.width / 2 - width / 2), window.innerWidth - width - 8);
-  tooltipEl.style.left = `${left}px`;
-  tooltipEl.style.top = `${Math.max(4, box.top - tooltipEl.offsetHeight - 10)}px`;
+  const height = tooltipEl.offsetHeight;
+  // Clears the lifted slab, which grows past the top of its slot.
+  const above = box.top - height - 28;
+  let left: number;
+  let top: number;
+  if (above >= 4) {
+    left = box.left + box.width / 2 - width / 2;
+    top = above;
+  } else {
+    // No room above, so sit beside the slab instead of covering it: to the right when it
+    // fits, else to the left. The gap clears the slab's 1.2x lift scale.
+    const gap = box.width * 0.1 + 10;
+    const right = box.right + gap;
+    left = right + width <= window.innerWidth - 8 ? right : box.left - gap - width;
+    // Centred on the lifted slab, which rises 16px.
+    top = box.top + box.height / 2 - 16 - height / 2;
+  }
+  tooltipEl.style.left = `${Math.min(Math.max(8, left), window.innerWidth - width - 8)}px`;
+  tooltipEl.style.top = `${Math.min(Math.max(4, top), window.innerHeight - height - 4)}px`;
 }
 
 function hideTooltip() {
+  unpin();
   tooltipAnchor = null;
   tooltipEl.hidden = true;
 }
+
+/*
+ * Clicking a slab pins its certificate: it stays up after the pointer leaves, until the next
+ * interaction (a click anywhere, hovering another slab, Escape, or the shelf losing focus).
+ */
+let pinned: HTMLElement | null = null;
+
+function unpin() {
+  pinned?.classList.remove("pinned");
+  pinned = null;
+}
+
+/** Pins `slot`'s certificate, or unpins it when it is already pinned. */
+function togglePin(slot: HTMLElement) {
+  if (pinned === slot) return unpin();
+  unpin();
+  pinned = slot;
+  slot.classList.add("pinned");
+  showTooltip(itemOf.get(slot)!, slot);
+}
+
+// Any press other than on the pinned slab ends the pin; a press on it toggles it on release.
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    // Hovering another slab already ended the pin, so a pin here is never under the pointer.
+    if (pinned && (event.target as Element).closest(".slot") !== pinned) hideTooltip();
+  },
+  true,
+);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && pinned) hideTooltip();
+});
+window.addEventListener("blur", () => {
+  if (pinned) hideTooltip();
+});
 
 /*
  * Each achievement is a `.slot` holding a `.slab`. The slot is the hit box and never moves;
@@ -153,13 +209,24 @@ function renderItem(item: ShelfItem, isNew: boolean): HTMLElement {
   const slab = el("div", isNew ? "slab new" : "slab");
   const tier = rarityTier(item.rarity);
   if (tier) slab.classList.add(`tier-${tier}`);
-  slab.append(gradeLabel(item, "grade slab-grade"), iconInsert(item, "slab-insert", item.title));
+  if (item.platinum) slab.classList.add("platinum");
+  const insert = iconInsert(item, "slab-insert", item.title);
+  if (item.platinum) insert.append(platinumLabel("platinum-band"));
+  slab.append(gradeLabel(item, "grade slab-grade"), insert);
   slot.append(slab);
   itemOf.set(slot, item);
   slot.addEventListener("mouseenter", () => {
-    if (!drag?.ghost) showTooltip(itemOf.get(slot)!, slot);
+    if (drag?.ghost) return;
+    if (pinned !== slot) unpin();
+    showTooltip(itemOf.get(slot)!, slot);
   });
-  slot.addEventListener("mouseleave", hideTooltip);
+  slot.addEventListener("mouseleave", () => {
+    if (pinned !== slot) hideTooltip();
+  });
+  // Trophies capture the pointer for dragging, so their clicks are handled in `endDrag`.
+  slot.addEventListener("click", () => {
+    if (!slot.classList.contains("movable")) togglePin(slot);
+  });
   return slot;
 }
 
@@ -169,6 +236,65 @@ function setChildren(parent: Element, nodes: HTMLElement[]) {
   if (current.length === nodes.length && nodes.every((node, i) => current[i] === node)) return;
   parent.replaceChildren(...nodes);
 }
+
+/*
+ * Under the mouse, the lifted slab tilts so the point beneath the cursor presses away, and its
+ * glare leans the other way. The box measured is the slot's, which never moves, so the tilt
+ * never feeds back into where the cursor appears to be. The transform is written straight to
+ * the slab; clearing it lets the slab ease back to rest through its CSS transition.
+ */
+const tiltQuery = window.matchMedia("(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)");
+const MAX_TILT = 12; // Degrees at the slab's edges.
+const TILT_PERSPECTIVE = 500;
+const HOVER_SCALE = 1.2; // Scale and lift match `.slot:hover > .slab` in shelf.css.
+const HOVER_LIFT = 16;
+let tilted: HTMLElement | null = null;
+let tiltFrame = 0;
+let tiltPointer = { x: 0, y: 0, slot: null as HTMLElement | null };
+
+function resetTilt() {
+  cancelAnimationFrame(tiltFrame);
+  tiltFrame = 0;
+  tiltPointer.slot = null;
+  if (!tilted) return;
+  tilted.style.transform = "";
+  tilted.style.removeProperty("--glare-x");
+  tilted.style.removeProperty("--glare-y");
+  tilted = null;
+}
+
+function drawTilt() {
+  tiltFrame = 0;
+  const slot = tiltPointer.slot;
+  const slab = slot?.firstElementChild as HTMLElement | null | undefined;
+  if (slab !== tilted) {
+    const pointer = tiltPointer;
+    resetTilt();
+    tiltPointer = pointer;
+  }
+  if (!slot || !slab || drag?.ghost) return;
+  const box = slot.getBoundingClientRect();
+  const x = Math.min(Math.max((tiltPointer.x - box.left) / box.width, 0), 1) - 0.5; // -0.5 left, 0.5 right.
+  const y = Math.min(Math.max((tiltPointer.y - box.top) / box.height, 0), 1) - 0.5; // -0.5 top, 0.5 bottom.
+  slab.style.transform =
+    `perspective(${TILT_PERSPECTIVE}px) rotateX(${(-y * 2 * MAX_TILT).toFixed(2)}deg) ` +
+    `rotateY(${(x * 2 * MAX_TILT).toFixed(2)}deg) translateY(-${HOVER_LIFT}px) scale(${HOVER_SCALE})`;
+  slab.style.setProperty("--glare-x", `${(-x * 24).toFixed(1)}px`);
+  slab.style.setProperty("--glare-y", `${(-y * 16).toFixed(1)}px`);
+  tilted = slab;
+}
+
+shelvesEl.addEventListener(
+  "pointermove",
+  (event) => {
+    if (event.pointerType !== "mouse" || drag?.ghost || !tiltQuery.matches) return;
+    const slot = (event.target as Element).closest<HTMLElement>(".slot");
+    tiltPointer = { x: event.clientX, y: event.clientY, slot: slot && shelvesEl.contains(slot) ? slot : null };
+    if (!tiltFrame) tiltFrame = requestAnimationFrame(drawTilt);
+  },
+  { passive: true },
+);
+shelvesEl.addEventListener("pointerleave", resetTilt);
 
 /*
  * Trophies are dragged to reorder them, across trophy rows too. The pointer is captured on
@@ -195,6 +321,8 @@ interface Drag {
   pointerX: number;
   pointerY: number;
   frame: number;
+  /** The ghost's swing: angle (deg) and its rate (deg/s), driven by the pointer's speed. */
+  swing: { angle: number; rate: number; speed: number; lastX: number; lastTime: number };
 }
 
 const DRAG_THRESHOLD = 4;
@@ -256,8 +384,38 @@ function dropOrder(d: Drag, x: number, y: number): HTMLElement[] {
   return others;
 }
 
-const ghostTransform = (x: number, y: number, tilt = true) =>
-  `translate3d(${x}px, ${y}px, 0)${tilt ? " rotate(-3deg) scale(1.05)" : ""}`;
+/** `angle` is the carried tilt in degrees; leave it out for the slab seated in its slot. */
+const ghostTransform = (x: number, y: number, angle?: number) =>
+  `translate3d(${x}px, ${y}px, 0)${angle === undefined ? "" : ` rotate(${angle.toFixed(2)}deg) scale(1.05)`}`;
+
+/*
+ * The carried slab hangs from the point it was grabbed by and swings as it is moved: a damped
+ * spring pulls its angle towards one set by the pointer's horizontal speed, so it trails behind
+ * a quick move and sways back and forth when the pointer stops.
+ */
+const CARRY_TILT = -3; // Resting angle while carried.
+const SWING_STIFFNESS = 90; // 1/s²: about 1.5 swings a second.
+const SWING_DAMPING = 5; // 1/s: settles in a few swings.
+const SWING_PER_SPEED = 0.02; // Degrees of lean per px/s of pointer speed.
+const MAX_SWING = 22;
+const SPEED_SMOOTHING = 0.05; // Seconds; evens out uneven pointer events.
+
+/** Advances the swing to `now`; returns whether it is still moving. */
+function stepSwing(d: Drag, now: number): boolean {
+  const s = d.swing;
+  const dt = Math.min((now - s.lastTime) / 1000, 1 / 30);
+  if (dt <= 0) return true;
+  const raw = (d.pointerX - s.lastX) / dt;
+  s.speed += (raw - s.speed) * (1 - Math.exp(-dt / SPEED_SMOOTHING));
+  s.lastX = d.pointerX;
+  s.lastTime = now;
+  const target = Math.min(Math.max(s.speed * SWING_PER_SPEED, -MAX_SWING), MAX_SWING);
+  s.rate += (SWING_STIFFNESS * (target - s.angle) - SWING_DAMPING * s.rate) * dt;
+  s.angle += s.rate * dt;
+  const resting = Math.abs(s.angle) < 0.05 && Math.abs(s.rate) < 0.5 && Math.abs(s.speed) < 1;
+  if (resting) s.angle = s.rate = s.speed = 0;
+  return !resting;
+}
 
 function startDrag(event: PointerEvent, slot: HTMLElement) {
   if (event.button !== 0 || drag) return;
@@ -277,6 +435,7 @@ function startDrag(event: PointerEvent, slot: HTMLElement) {
     pointerX: event.clientX,
     pointerY: event.clientY,
     frame: 0,
+    swing: { angle: 0, rate: 0, speed: 0, lastX: event.clientX, lastTime: performance.now() },
   };
   shelvesEl.setPointerCapture(event.pointerId);
 }
@@ -290,7 +449,7 @@ function settleGhost(ghost: HTMLElement, slot: HTMLElement) {
   if (reducedMotion() || !slot.isConnected) return finish();
   const { left, top } = placeOf(slot);
   ghost
-    .animate([{ transform: ghost.style.transform }, { transform: ghostTransform(left, top, false) }], {
+    .animate([{ transform: ghost.style.transform }, { transform: ghostTransform(left, top) }], {
       duration: 180,
       easing: LIFT_EASING,
       fill: "forwards",
@@ -306,6 +465,8 @@ function endDrag(save: boolean) {
   cancelAnimationFrame(d.frame);
   if (shelvesEl.hasPointerCapture(d.pointerId)) shelvesEl.releasePointerCapture(d.pointerId);
   let saving = false;
+  // Released without moving far enough to pick it up: a click.
+  if (!d.ghost && save) togglePin(d.slot);
   if (d.ghost) {
     shelvesEl.classList.remove("dragging");
     const changed = d.order.some((slot, i) => slot !== d.initial[i]);
@@ -331,11 +492,13 @@ function endDrag(save: boolean) {
   }
 }
 
-function drawDrag() {
+function drawDrag(now: number) {
   const d = drag;
   if (!d?.ghost) return;
   d.frame = 0;
-  d.ghost.style.transform = ghostTransform(d.pointerX - d.offsetX, d.pointerY - d.offsetY);
+  // Keeps drawing while the slab swings, after the pointer has stopped too.
+  if (!reducedMotion() && stepSwing(d, now)) d.frame = requestAnimationFrame(drawDrag);
+  d.ghost.style.transform = ghostTransform(d.pointerX - d.offsetX, d.pointerY - d.offsetY, CARRY_TILT + d.swing.angle);
   const order = dropOrder(d, d.pointerX, d.pointerY);
   if (order !== d.order) {
     d.order = order;
@@ -351,11 +514,15 @@ shelvesEl.addEventListener("pointermove", (event) => {
   if (!d.ghost) {
     if (Math.hypot(event.clientX - d.startX, event.clientY - d.startY) < DRAG_THRESHOLD) return;
     hideTooltip();
+    resetTilt();
     const ghost = d.slot.firstElementChild!.cloneNode(true) as HTMLElement;
     ghost.classList.remove("new");
     ghost.classList.add("drag-ghost");
-    ghost.style.transform = ghostTransform(event.clientX - d.offsetX, event.clientY - d.offsetY);
+    ghost.style.transformOrigin = `${d.offsetX}px ${d.offsetY}px`; // Swings from where it is held.
+    ghost.style.transform = ghostTransform(event.clientX - d.offsetX, event.clientY - d.offsetY, CARRY_TILT);
     document.body.append(ghost);
+    d.swing.lastX = event.clientX;
+    d.swing.lastTime = performance.now();
     d.ghost = ghost;
     d.slot.classList.add("drag-source");
     shelvesEl.classList.add("dragging");
@@ -395,6 +562,7 @@ const sameItem = (a: ShelfItem, b: ShelfItem) =>
   a.apiName === b.apiName &&
   a.description === b.description &&
   a.rarity === b.rarity &&
+  a.platinum === b.platinum &&
   a.unlockedAt === b.unlockedAt &&
   a.gameName === b.gameName &&
   a.iconUrl === b.iconUrl;
@@ -508,6 +676,7 @@ let oldestShown = -Infinity;
 function renderShelf(shelf: Shelf) {
   banners = shelf.banners;
   perRow = shelf.perRow;
+  document.documentElement.style.setProperty("--per-row", String(perRow));
   const next = new Map<string, Rendered>();
   const rows: RowSpec[] = [];
   for (let r = 0; r < shelf.trophyRows; r++) {
@@ -539,7 +708,7 @@ function renderShelf(shelf: Shelf) {
 
   // Keep the tooltip while its slot is still on the shelf; rows may have moved, so re-place it.
   const anchor = tooltipAnchor;
-  if (anchor?.isConnected && anchor.matches(":hover")) showTooltip(itemOf.get(anchor)!, anchor);
+  if (anchor?.isConnected && (anchor === pinned || anchor.matches(":hover"))) showTooltip(itemOf.get(anchor)!, anchor);
   else hideTooltip();
   requestAnimationFrame(reportHitRect);
 }
@@ -584,14 +753,14 @@ async function refresh() {
 }
 
 /*
- * A level was added or removed. The shelf lays the levels out at once with what it already has
- * (a new recent level stays empty a moment), and the full refresh that follows fills it in.
+ * A level was added or removed, or the rows got longer or shorter. The shelf lays the levels out
+ * at once with what it already has (new recent slots stay empty a moment), and the full refresh that follows fills it in.
  */
-listen<{ rows: number; trophyRows: number }>("shelf-layout", ({ payload }) => {
+listen<{ rows: number; trophyRows: number; perRow: number }>("shelf-layout", ({ payload }) => {
   if (!lastShelf || drag) return;
   // The new counts outdate any refresh still on its way.
   refreshSeq++;
-  renderShelf({ ...lastShelf, rows: payload.rows, trophyRows: payload.trophyRows });
+  renderShelf({ ...lastShelf, rows: payload.rows, trophyRows: payload.trophyRows, perRow: payload.perRow });
 });
 
 window.addEventListener("resize", () => requestAnimationFrame(reportHitRect));

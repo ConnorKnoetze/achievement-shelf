@@ -23,12 +23,15 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use achievement::{game_key, Achievement, Source};
 use gog::GogPaths;
 use rarity::RarityCache;
-use settings::{Settings, TrophyKey, MAX_LEVELS, MAX_SCALE, MIN_SCALE, PER_ROW};
+use settings::{Settings, Theme, TrophyKey, MAX_LEVELS, MAX_PER_ROW, MAX_SCALE, MIN_PER_ROW, MIN_SCALE};
 use steam::SteamPaths;
 
 // Shelf layout in CSS pixels; must match the sizes in src/shelf.css.
-const SHELF_WIDTH: f64 = 520.0;
-const ROW_HEIGHT: f64 = 112.0;
+/// Width of a shelf without its achievements: padding and the rail's ends.
+const SHELF_BASE_WIDTH: f64 = 64.0;
+/// Width each achievement adds to a shelf: a slab and the gap beside it.
+const SLOT_WIDTH: f64 = 76.0;
+const ROW_HEIGHT: f64 = 128.0;
 const PICKER_LABEL: &str = "picker";
 const SETTINGS_LABEL: &str = "settings";
 const UPDATE_LABEL: &str = "updater";
@@ -40,7 +43,12 @@ const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const UPDATE_CHECK_MIN_SHOWN: Duration = Duration::from_millis(1200);
 /// Sent with a fresh [`SettingsView`] whenever a setting changes, from the tray or the settings window.
 const SETTINGS_EVENT: &str = "settings-changed";
-/// Sent with the new level counts as soon as they change, so the shelf can lay them out
+/// Width of a shelf holding `per_row` achievements in each row, in CSS pixels.
+fn shelf_width(per_row: usize) -> f64 {
+    SHELF_BASE_WIDTH + SLOT_WIDTH * per_row as f64
+}
+
+/// Sent with the new level counts and row length as soon as they change, so the shelf can lay them out
 /// before the full redraw that follows reaches it.
 const LAYOUT_EVENT: &str = "shelf-layout";
 
@@ -110,6 +118,8 @@ struct PickerData {
     /// Launchers found on this PC, so the picker can tell "not installed" from "nothing unlocked".
     launchers: Vec<Source>,
     max_trophies: usize,
+    /// Trophies on each rail of the shelf.
+    per_row: usize,
     trophies: Vec<TrophyKey>,
     items: Vec<PickerItem>,
 }
@@ -244,9 +254,16 @@ async fn banners(
 
 #[tauri::command]
 async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
-    let (rows, trophy_rows, trophy_capacity, trophy_keys) = {
+    let (rows, trophy_rows, per_row, trophy_capacity, recent_capacity, trophy_keys) = {
         let settings = state.settings.lock().unwrap();
-        (settings.rows, settings.trophy_rows, settings.trophy_capacity(), settings.trophies.clone())
+        (
+            settings.rows,
+            settings.trophy_rows,
+            settings.per_row,
+            settings.trophy_capacity(),
+            settings.recent_capacity(),
+            settings.trophies.clone(),
+        )
     };
 
     let Unlocked { achievements: mut recent, names, gog_banners, .. } = load_unlocked().await?;
@@ -257,7 +274,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         .filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned())
         .take(trophy_capacity)
         .collect();
-    recent.truncate(rows * PER_ROW);
+    recent.truncate(recent_capacity);
 
     let shown: Vec<&Achievement> = recent.iter().chain(&trophies).collect();
     resolve_names(&state, names, &shown).await;
@@ -267,7 +284,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
     Ok(Shelf {
         rows,
         trophy_rows,
-        per_row: PER_ROW,
+        per_row,
         trophies: shelf_items(&state, trophies).await,
         items: shelf_items(&state, recent).await,
         banners,
@@ -284,11 +301,11 @@ async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> 
         .into_iter()
         .map(|achievement| PickerItem { game_name: game_name(&state, &achievement), achievement })
         .collect();
-    let (max_trophies, trophies) = {
+    let (max_trophies, per_row, trophies) = {
         let settings = state.settings.lock().unwrap();
-        (settings.trophy_capacity(), settings.trophies.clone())
+        (settings.trophy_capacity(), settings.per_row, settings.trophies.clone())
     };
-    Ok(PickerData { launchers, max_trophies, trophies, items })
+    Ok(PickerData { launchers, max_trophies, per_row, trophies, items })
 }
 
 #[tauri::command]
@@ -392,9 +409,45 @@ fn fit_zoom(monitor: &Monitor) -> f64 {
     height / (MAX_LEVELS as f64 * ROW_HEIGHT)
 }
 
-/// Zooms the page so the shelf is drawn at the settings' scale on `monitor`.
+/// Largest scale at which the settings' shelf, with its current levels and row length, still
+/// fits `monitor`'s work area, up to [`MAX_SCALE`]. Fewer levels or shorter rows leave room to
+/// draw the shelf larger than 100%.
+fn max_scale(monitor: &Monitor, settings: &Settings) -> f64 {
+    let area = monitor.work_area().size;
+    let width = area.width as f64 / monitor.scale_factor();
+    let height = area.height as f64 / monitor.scale_factor();
+    let fit = (height / (settings.total_rows() as f64 * ROW_HEIGHT)).min(width / shelf_width(settings.per_row));
+    (fit / fit_zoom(monitor)).clamp(MIN_SCALE, MAX_SCALE)
+}
+
+/// Share of the work area's width a shelf of the default row length takes before a size is chosen.
+const DEFAULT_WIDTH_SHARE: f64 = 1.0 / 3.0;
+/// Share of the work area's height the default shelf's levels take before a size is chosen.
+const DEFAULT_HEIGHT_SHARE: f64 = 0.3;
+
+/// Scale for a shelf whose size has not been chosen: the default shelf (one recent row and one
+/// trophy row of the default length) takes a fixed share of `monitor`'s work area, so it reads
+/// alike on every screen. It is worked out from the default layout, not the current one, so
+/// adding rows or achievements grows the shelf rather than shrinking each achievement.
+fn default_scale(monitor: &Monitor) -> f64 {
+    let defaults = Settings::default();
+    let area = monitor.work_area().size;
+    let width = area.width as f64 / monitor.scale_factor() * DEFAULT_WIDTH_SHARE;
+    let height = area.height as f64 / monitor.scale_factor() * DEFAULT_HEIGHT_SHARE;
+    let zoom = (width / shelf_width(defaults.per_row)).min(height / (defaults.total_rows() as f64 * ROW_HEIGHT));
+    zoom / fit_zoom(monitor)
+}
+
+/// The scale the shelf is drawn at on `monitor`: the chosen scale, or one sized for the display
+/// if none was chosen, made smaller if the shelf would not fit at it.
+fn shown_scale(monitor: &Monitor, settings: &Settings) -> f64 {
+    let scale = settings.scale.unwrap_or_else(|| default_scale(monitor));
+    scale.clamp(MIN_SCALE, max_scale(monitor, settings))
+}
+
+/// Zooms the page so the shelf is drawn at its shown scale on `monitor`.
 fn apply_zoom(window: &WebviewWindow, monitor: &Monitor, settings: &Settings) -> tauri::Result<()> {
-    window.set_zoom(settings.scale * fit_zoom(monitor))
+    window.set_zoom(shown_scale(monitor, settings) * fit_zoom(monitor))
 }
 
 /// Zooms the shelf for its scale on the chosen display, after moving the window there.
@@ -408,17 +461,16 @@ fn apply_scale(window: &WebviewWindow, settings: &Settings) -> tauri::Result<()>
 /// Puts the window in the bottom-right corner of the chosen display, above the taskbar, and
 /// zooms the page for the shelf scale.
 ///
-/// The window is the size of the largest shelf (every level, at the largest scale) whatever the
-/// settings, and it is click-through outside the shelf. So changing the scale or the levels only
-/// zooms or redraws the page. Resizing and moving the window instead shows each step as a
-/// separate frame, and the shelf jumps around on every change.
+/// The window fills the work area whatever the settings, since the shelf is never drawn larger
+/// than fits it (see `max_scale`), and it is click-through outside the shelf. So changing the
+/// scale or the levels only zooms or redraws the page. Resizing and moving the window instead
+/// shows each step as a separate frame, and the shelf jumps around on every change.
 fn place_window(window: &WebviewWindow, settings: &Settings) -> tauri::Result<()> {
     let Some(monitor) = shelf_monitor(window, settings.display.as_deref())? else {
         return Ok(());
     };
     let area = monitor.work_area();
-    let width = (SHELF_WIDTH * monitor.scale_factor() * MAX_SCALE * fit_zoom(&monitor)).round() as u32;
-    // Every level at the largest scale fills the work area's height (see `fit_zoom`).
+    let width = area.size.width;
     let height = area.size.height;
     // Moves onto the display before sizing: crossing to a display with another scale makes
     // Windows rescale the window, which would undo a size set first. On the same display that
@@ -494,7 +546,7 @@ fn open_picker(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn open_settings(app: &AppHandle) -> tauri::Result<()> {
-    open_window(app, SETTINGS_LABEL, "settings.html", "Achievement Shelf settings", (420.0, 600.0), (380.0, 560.0))
+    open_window(app, SETTINGS_LABEL, "settings.html", "Achievement Shelf settings", (420.0, 860.0), (380.0, 560.0))
 }
 
 /// Tray check items that mirror settings the settings window can also change.
@@ -510,17 +562,23 @@ struct SettingsView {
     rows: usize,
     trophy_rows: usize,
     max_levels: usize,
+    per_row: usize,
+    min_per_row: usize,
+    max_per_row: usize,
     /// Name of the chosen display; empty for the main display.
     display: String,
     displays: Vec<DisplayOption>,
     scale: f64,
     min_scale: f64,
     max_scale: f64,
+    /// Whether the shelf is sized for its display rather than at a chosen scale.
+    scale_is_default: bool,
     can_add_row: bool,
     can_remove_recent_row: bool,
     can_remove_trophy_row: bool,
     on_top: bool,
     autostart: bool,
+    theme: Theme,
 }
 
 /// A display the shelf can be put on, for the settings window's list.
@@ -553,20 +611,34 @@ fn display_options(app: &AppHandle, chosen: Option<&str>) -> Vec<DisplayOption> 
 
 fn settings_view(app: &AppHandle) -> SettingsView {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    // The slider runs up to the largest scale the shelf fits its display at, and shows the
+    // scale it is drawn at, which a longer shelf may hold below the chosen one.
+    let monitor = app
+        .get_webview_window("main")
+        .and_then(|window| shelf_monitor(&window, settings.display.as_deref()).ok().flatten());
+    let (scale, max_scale) = match &monitor {
+        Some(m) => (shown_scale(m, &settings), max_scale(m, &settings)),
+        None => (settings.scale.unwrap_or(1.0), MAX_SCALE),
+    };
     SettingsView {
         display: settings.display.clone().unwrap_or_default(),
         displays: display_options(app, settings.display.as_deref()),
         rows: settings.rows,
         trophy_rows: settings.trophy_rows,
         max_levels: MAX_LEVELS,
-        scale: settings.scale,
+        per_row: settings.per_row,
+        min_per_row: MIN_PER_ROW,
+        max_per_row: MAX_PER_ROW,
+        scale,
         min_scale: MIN_SCALE,
-        max_scale: MAX_SCALE,
+        max_scale,
+        scale_is_default: settings.scale.is_none(),
         can_add_row: settings.can_add_row(),
         can_remove_recent_row: settings.can_remove_recent_row(),
         can_remove_trophy_row: settings.can_remove_trophy_row(),
         on_top: settings.on_top,
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
+        theme: settings.theme,
     }
 }
 
@@ -589,11 +661,38 @@ fn change_rows(app: &AppHandle, trophy: bool, add: bool) {
             return;
         }
         settings.save(&state.settings_path);
-        let _ = app.emit(LAYOUT_EVENT, serde_json::json!({ "rows": settings.rows, "trophyRows": settings.trophy_rows }));
+        emit_layout(app, &settings);
+        rezoom(app, &settings);
     }
     // Redraws the shelf and updates the picker's trophy capacity.
     let _ = app.emit(watch::UPDATED_EVENT, ());
     settings_changed(app);
+}
+
+/// Adds or removes an achievement from every row; the shelf redraws with it.
+fn change_per_row(app: &AppHandle, add: bool) {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        if !settings.change_per_row(if add { 1 } else { -1 }) {
+            return;
+        }
+        settings.save(&state.settings_path);
+        emit_layout(app, &settings);
+        rezoom(app, &settings);
+    }
+    // Redraws the shelf and updates the picker's trophy capacity and rails.
+    let _ = app.emit(watch::UPDATED_EVENT, ());
+    settings_changed(app);
+}
+
+fn emit_layout(app: &AppHandle, settings: &Settings) {
+    let layout = serde_json::json!({
+        "rows": settings.rows,
+        "trophyRows": settings.trophy_rows,
+        "perRow": settings.per_row,
+    });
+    let _ = app.emit(LAYOUT_EVENT, layout);
 }
 
 /// Moves the shelf to the named display; an empty name means the main display.
@@ -612,18 +711,26 @@ fn set_display(app: &AppHandle, name: String) {
     settings_changed(app);
 }
 
-/// Resizes the shelf to `scale` times its normal size.
-fn set_scale(app: &AppHandle, scale: f64) {
+/// Zooms the shelf for its scale, which the shelf's levels and row length limit.
+fn rezoom(app: &AppHandle, settings: &Settings) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(e) = apply_scale(&window, settings) {
+            eprintln!("achievement-shelf: could not resize the shelf: {e}");
+        }
+    }
+}
+
+/// Resizes the shelf to `scale` times its normal size, or with `None` back to the size for its display.
+fn set_scale(app: &AppHandle, scale: Option<f64>) {
     let state = app.state::<AppState>();
     {
         let mut settings = state.settings.lock().unwrap();
-        settings.set_scale(scale);
-        settings.save(&state.settings_path);
-        if let Some(window) = app.get_webview_window("main") {
-            if let Err(e) = apply_scale(&window, &settings) {
-                eprintln!("achievement-shelf: could not resize the shelf: {e}");
-            }
+        match scale {
+            Some(scale) => settings.set_scale(scale),
+            None => settings.reset_scale(),
         }
+        settings.save(&state.settings_path);
+        rezoom(app, &settings);
     }
     settings_changed(app);
 }
@@ -638,6 +745,51 @@ fn set_on_top(app: &AppHandle, value: bool) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = apply_layer(&window, value);
     }
+    settings_changed(app);
+}
+
+/// Themes every window, open and future. Windows' title bars follow it, and so does each
+/// page's `prefers-color-scheme`, which the window styles switch on. With no theme set, both
+/// follow the Windows app theme as it changes.
+fn apply_theme(app: &AppHandle, theme: Theme) {
+    app.set_theme(match theme {
+        Theme::Dark => Some(tauri::Theme::Dark),
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::System => None,
+    });
+}
+
+fn set_theme(app: &AppHandle, theme: Theme) {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.settings.lock().unwrap();
+        settings.theme = theme;
+        settings.save(&state.settings_path);
+    }
+    apply_theme(app, theme);
+    settings_changed(app);
+}
+
+/// Puts every setting back to its default and redraws the shelf with them. Trophies stay, and
+/// so does Start with Windows, which lives in Windows rather than in the settings.
+fn reset_all(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let theme = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.reset();
+        settings.save(&state.settings_path);
+        emit_layout(app, &settings);
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(e) = place_window(&window, &settings) {
+                eprintln!("achievement-shelf: could not move the shelf: {e}");
+            }
+            let _ = apply_layer(&window, settings.on_top);
+        }
+        settings.theme
+    };
+    apply_theme(app, theme);
+    // Redraws the shelf and updates the picker's trophy capacity and rails.
+    let _ = app.emit(watch::UPDATED_EVENT, ());
     settings_changed(app);
 }
 
@@ -661,6 +813,12 @@ fn change_shelf_rows(app: AppHandle, trophy: bool, add: bool) -> SettingsView {
 }
 
 #[tauri::command]
+fn change_shelf_per_row(app: AppHandle, add: bool) -> SettingsView {
+    change_per_row(&app, add);
+    settings_view(&app)
+}
+
+#[tauri::command]
 fn set_shelf_display(app: AppHandle, name: String) -> SettingsView {
     set_display(&app, name);
     settings_view(&app)
@@ -668,13 +826,31 @@ fn set_shelf_display(app: AppHandle, name: String) -> SettingsView {
 
 #[tauri::command]
 fn set_shelf_scale(app: AppHandle, scale: f64) -> SettingsView {
-    set_scale(&app, scale);
+    set_scale(&app, Some(scale));
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn reset_shelf_scale(app: AppHandle) -> SettingsView {
+    set_scale(&app, None);
     settings_view(&app)
 }
 
 #[tauri::command]
 fn set_keep_on_top(app: AppHandle, value: bool) -> SettingsView {
     set_on_top(&app, value);
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn set_app_theme(app: AppHandle, theme: Theme) -> SettingsView {
+    set_theme(&app, theme);
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn reset_settings(app: AppHandle) -> SettingsView {
+    reset_all(&app);
     settings_view(&app)
 }
 
@@ -868,8 +1044,8 @@ fn open_update_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         // The shelves sit in the work area's bottom-right corner, at the page's zoom (see
         // `place_window` and `apply_zoom`). Worked out here rather than asked of the shelf
         // page, which may not have drawn yet while its window is hidden.
-        let px = monitor.scale_factor() * settings.scale * fit_zoom(&monitor);
-        let shelf_width = SHELF_WIDTH * px;
+        let px = monitor.scale_factor() * shown_scale(&monitor, &settings) * fit_zoom(&monitor);
+        let shelf_width = shelf_width(settings.per_row) * px;
         let shelf_height = settings.total_rows() as f64 * ROW_HEIGHT * px;
         let (right, bottom) = (area.position.x + area.size.width as i32, area.position.y + area.size.height as i32);
         let x = (right as f64 - (shelf_width + size.width as f64) / 2.0).round() as i32;
@@ -1032,6 +1208,7 @@ pub fn run() {
                 rarity,
                 hit_rect: hit_rect.clone(),
             });
+            apply_theme(app.handle(), settings.theme);
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");
             place_window(&window, &settings)?;
             apply_layer(&window, settings.on_top)?;
@@ -1062,9 +1239,13 @@ pub fn run() {
             set_hit_rect,
             get_settings,
             change_shelf_rows,
+            change_shelf_per_row,
             set_shelf_display,
             set_shelf_scale,
+            reset_shelf_scale,
             set_keep_on_top,
+            set_app_theme,
+            reset_settings,
             set_start_with_windows
         ])
         .run(tauri::generate_context!())
