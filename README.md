@@ -9,6 +9,7 @@ It reads the achievement data Steam and GOG Galaxy already store on your PC, so 
 - **Trophy shelf:** pick the achievements you're proudest of and arrange them in the order you want.
 - **Recent unlocks:** extra rows that fill with your latest achievements and update live while you play.
 - **Rarity tiers:** each achievement is coloured by how many players have it: Common, Uncommon, Rare, Epic or Legendary.
+- **Platinum:** when you unlock every achievement in a game, the one that completed it gets a Platinum label next to its rarity.
 - **Details on hover:** the game's banner, name, achievement description, unlock date and rarity.
 - **Steam and GOG together** on one shelf.
 - **Stays out of the way:** clicks outside the shelf go straight through to your desktop. It can sit behind your windows or stay on top.

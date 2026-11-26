@@ -33,10 +33,12 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Sizes here must match SHELF_WIDTH / ROW_HEIGHT in src-tauri/src/lib.rs. */
+/* Sizes here must match SHELF_BASE_WIDTH / SLOT_WIDTH / ROW_HEIGHT in src-tauri/src/lib.rs.
+   --per-row is set from the shelf's settings. */
 :root {
-  --shelf-width: 520px;
-  --row-height: 112px;
+  --per-row: 6;
+  --shelf-width: calc(64px + 76px * var(--per-row));
+  --row-height: 128px;
   --rail-height: 12px;
   --rail-gap: 10px;
   --slab-width: 62px;
@@ -166,14 +168,21 @@ body {
   inset: 0;
   border-radius: 5px;
   box-shadow: 0 14px 16px -6px rgba(0, 0, 0, 0.55);
-  transform: translateY(-8px);
+  transform: translateY(-16px) scale(1.2);
   opacity: 0;
   transition: opacity 0.28s var(--lift);
   pointer-events: none;
 }
 
-.slot:hover::before {
+.slot:hover::before,
+.slot.pinned::before {
   opacity: 1;
+}
+
+/* The lifted slab grows past its slot, so it paints above its neighbours. */
+.slot:hover,
+.slot.pinned {
+  z-index: 1;
 }
 
 /* The slab: clear acrylic, grade label on top, the icon in a dark insert. It keeps its own
@@ -201,9 +210,11 @@ body {
   cursor: default;
 }
 
-/* Lifted out of its slot. */
-.slot:hover > .slab {
-  transform: translateY(-8px);
+/* Lifted out of its slot and brought closer; matches HOVER_LIFT and HOVER_SCALE in shelf.ts.
+   A clicked (pinned) slab stays lifted with its certificate after the pointer leaves. */
+.slot:hover > .slab,
+.slot.pinned > .slab {
+  transform: translateY(-16px) scale(1.2);
 }
 
 /* Trophies can be picked up and moved along the trophy rails. */
@@ -246,17 +257,21 @@ body {
   transition: none;
 }
 
-/* Glare on the acrylic face, above everything inside it. */
+/* Glare on the acrylic face, above everything inside it. It overhangs the slab so it can lean
+   against the hover tilt (--glare-x/y, set from shelf.ts) without its edge showing. */
 .slab::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -16px;
   z-index: 2;
   background: linear-gradient(162deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 30%, transparent 46%);
+  transform: translate(var(--glare-x, 0px), var(--glare-y, 0px));
+  transition: transform 0.28s var(--lift);
   pointer-events: none;
 }
 
 .slab-insert {
+  position: relative;
   width: 54px;
   height: 54px;
   padding: 1px;
@@ -334,30 +349,59 @@ body {
   font-size: 10px;
 }
 
-/* Colours match the rarity labels in the picker. */
+/* Each tier is printed in a finish: pewter, jade, cobalt foil, iridescent amethyst, gold
+   leaf. Platinum is not a rarity tier: it is printed as its own label, in the same way.
+   Colours match the rarity labels in the picker. */
 .tier-common {
-  --tier: #c9c2b6;
+  --tier: linear-gradient(135deg, #dedad2, #b4afa5 50%, #d6d2c9);
 }
 
 .tier-uncommon {
-  --tier: #7fd38a;
+  --tier: linear-gradient(135deg, #a8e8c8, #56c095 55%, #93dcb8);
 }
 
 .tier-rare {
-  --tier: #6cb4f5;
+  --tier: linear-gradient(135deg, #a6cfff, #5a97ef 50%, #b0d6ff);
 }
 
 .tier-epic {
-  --tier: #c79bff;
+  --tier: linear-gradient(120deg, #dcb0ff, #b07cff 35%, #f394d6 70%, #cda4ff);
 }
 
 .tier-legendary {
-  --tier: #ffb347;
+  --tier: linear-gradient(120deg, #ffd47e, #f2a020 30%, #ffeab0 50%, #e48c14 75%, #ffc65a);
 }
 
-/* Legendary slabs catch the light: one glare sweep across the acrylic when lifted, and
+.tier-platinum {
+  --tier: linear-gradient(120deg, #f3f6fa, #c6d0dc 28%, #ffffff 46%, #dce4f4 54%, #b6c1d0 74%, #eef2f7);
+}
+
+/* The platinum label on a slab: a strip printed across the foot of the icon, on the
+   achievement that completed its game. It sits inside the insert so slabs keep their size. */
+.platinum-band {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
+  display: grid;
+  place-items: center;
+  height: 10px;
+  border-radius: 0 0 1px 1px;
+  background: var(--tier);
+  box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.35);
+  font-family: var(--grade-face);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+/* Legendary slabs, and the platinum of each completed game, catch the light: one glare sweep across the acrylic when lifted, and
    when a new one lands. Nothing loops, since the shelf is on screen all day. */
-.slab.tier-legendary::before {
+.slab.tier-legendary::before,
+.slab.platinum::before {
   content: "";
   position: absolute;
   z-index: 3;
@@ -370,11 +414,13 @@ body {
   pointer-events: none;
 }
 
-.slab.tier-legendary:hover::before {
+.slab.tier-legendary:hover::before,
+.slab.platinum:hover::before {
   animation: glare 0.9s var(--lift);
 }
 
-.slab.tier-legendary.new::before {
+.slab.tier-legendary.new::before,
+.slab.platinum.new::before {
   animation: glare 0.9s 0.5s var(--lift);
 }
 
@@ -407,7 +453,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .slab.tier-legendary::before {
+  .slab.tier-legendary::before,
+  .slab.platinum::before {
     animation: none;
   }
 
@@ -526,6 +573,18 @@ body {
   margin: 9px 0 0;
   color: #c4c9cf;
   text-wrap: pretty;
+}
+
+/* The platinum label sits just above the grade, as a second printed band. */
+.cert-platinum + .cert-grade {
+  margin-top: 5px;
+}
+
+.cert-platinum .grade-pct {
+  white-space: nowrap;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
 }
 
 /* The printed grade, run across the foot of the certificate. */

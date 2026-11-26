@@ -1,9 +1,9 @@
-/** Rarity tiers by global unlock percentage, matching GOG Galaxy's bands. */
+/** Rarity tiers by global unlock percentage. */
 const TIERS: { min: number; name: string }[] = [
-  { min: 30, name: "Common" },
-  { min: 10, name: "Uncommon" },
-  { min: 2.5, name: "Rare" },
-  { min: 0.5, name: "Epic" },
+  { min: 40, name: "Common" },
+  { min: 15, name: "Uncommon" },
+  { min: 5, name: "Rare" },
+  { min: 1, name: "Epic" },
   { min: 0, name: "Legendary" },
 ];
 
@@ -39,5 +39,28 @@ export function gradeLabel(percent: number | null, className: string): HTMLSpanE
     label.title = "No rarity data for this achievement";
   }
   label.append(tierEl, pctEl);
+  return label;
+}
+
+export const PLATINUM_TITLE = "Platinum: completed the game with every achievement unlocked";
+
+/**
+ * The platinum label, printed beside the grade on the achievement that completed its game.
+ * `note`, when given, is printed on card stock after the platinum block.
+ */
+export function platinumLabel(className: string, note?: string): HTMLSpanElement {
+  const label = document.createElement("span");
+  label.className = `${className} tier-platinum`;
+  label.title = PLATINUM_TITLE;
+  const tierEl = document.createElement("span");
+  tierEl.className = "grade-tier";
+  tierEl.textContent = "Platinum";
+  label.append(tierEl);
+  if (note) {
+    const noteEl = document.createElement("span");
+    noteEl.className = "grade-pct";
+    noteEl.textContent = note;
+    label.append(noteEl);
+  }
   return label;
 }

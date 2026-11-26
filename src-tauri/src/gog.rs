@@ -3,13 +3,13 @@
 //! Galaxy keeps the database open in WAL mode, so it is opened read-only and every
 //! query runs in a short-lived connection that does not hold Galaxy up.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use crate::achievement::{game_key, Achievement, Source};
+use crate::achievement::{crown_platinum, game_key, Achievement, Source};
 
 pub const DB_FILE_NAME: &str = "galaxy-2.0.db";
 
@@ -43,9 +43,12 @@ impl GogPaths {
         Ok(conn)
     }
 
-    /// All unlocked achievements, newest first.
+    /// All unlocked achievements, newest first, with each completed game's platinum marked.
     pub fn load_all(&self) -> Result<Vec<Achievement>, String> {
-        let mut all = unlocked(&self.open()?).map_err(|e| e.to_string())?;
+        let conn = self.open()?;
+        let mut all = unlocked(&conn).map_err(|e| e.to_string())?;
+        let complete = completed_games(&conn).map_err(|e| e.to_string())?;
+        crown_platinum(&mut all, |a| complete.contains(&a.game_id));
         all.sort_by(|a, b| b.unlocked_at.cmp(&a.unlocked_at));
         Ok(all)
     }
@@ -122,8 +125,33 @@ fn unlocked(conn: &Connection) -> rusqlite::Result<Vec<Achievement>> {
             icon: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             unlocked_at: unlock_time.as_deref().and_then(parse_unlock_time).unwrap_or(0),
             rarity: row.get::<_, Option<f64>>(7)?.map(|r| r as f32),
+            platinum: false,
         })
     })?;
+    rows.collect()
+}
+
+/// Release keys of games where the active user has unlocked every achievement Galaxy
+/// defines. Each definition is matched by its API key, so an unlock of an achievement the
+/// game no longer defines cannot stand in for a locked one, and a game with no definitions
+/// is never complete.
+fn completed_games(conn: &Connection) -> rusqlite::Result<HashSet<String>> {
+    let Some(user) = active_user(conn)? else {
+        return Ok(HashSet::new());
+    };
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT a.gameReleaseKey FROM Achievements a
+         WHERE NOT EXISTS (
+             SELECT 1 FROM Achievements d
+             WHERE d.gameReleaseKey = a.gameReleaseKey
+               AND NOT EXISTS (
+                   SELECT 1 FROM UserAchievements ua
+                   WHERE ua.gameReleaseKey = d.gameReleaseKey AND ua.apikey = d.apikey
+                     AND ua.userId = ?1 AND ua.isUnlocked = 1
+               )
+         )",
+    )?;
+    let rows = stmt.query_map([user], |row| row.get(0))?;
     rows.collect()
 }
 
@@ -264,6 +292,28 @@ mod tests {
         assert_eq!(fool.icon, "https://images.gog.com/abc_gac_60.jpg");
         assert_eq!(fool.unlocked_at, 1_659_832_047);
         assert_eq!(fool.rarity, Some(93.9));
+    }
+
+    #[test]
+    fn completed_games_need_every_defined_achievement_unlocked() {
+        let conn = galaxy_db();
+        conn.execute_batch(
+            "INSERT INTO Achievements VALUES
+                 ('gog_3', 'One', NULL, NULL, NULL, 1, 50.0, 'common'),
+                 ('gog_3', 'Two', NULL, NULL, NULL, 0, 2.0, 'rare'),
+                 ('gog_4', 'Only', NULL, NULL, NULL, 1, 9.0, 'rare');
+             INSERT INTO Users VALUES (77);
+             INSERT INTO UserAchievements VALUES
+                 ('gog_3', 55, 'One', '2023-01-01 10:00:00', 1),
+                 ('gog_3', 55, 'Two', '2023-01-02 10:00:00', 1),
+                 ('gog_3', 55, 'Removed', '2023-01-03 10:00:00', 1),
+                 ('gog_4', 77, 'Only', '2023-01-01 10:00:00', 1),
+                 ('gog_5', 55, 'Orphan', '2023-01-01 10:00:00', 1);",
+        )
+        .unwrap();
+        // gog_1 has a locked achievement, gog_4 was finished by another user, and gog_5 has
+        // no definitions at all.
+        assert_eq!(completed_games(&conn).unwrap(), HashSet::from(["gog_3".to_string()]));
     }
 
     #[test]

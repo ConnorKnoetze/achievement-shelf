@@ -20,22 +20,55 @@ const LIBRARY_CACHE_LISTS: [&str; 2] = ["vecHighlight", "vecUnachieved"];
 
 /// Percentages from the library cache. Empty when the file is missing or unreadable.
 pub fn local_percents(paths: &SteamPaths, app_id: u32) -> Percents {
-    fs::read(paths.library_cache_path(app_id))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .map(|json| parse_library_cache(&json))
-        .unwrap_or_default()
+    read_library_cache(paths, app_id).map(|json| parse_library_cache(&json)).unwrap_or_default()
+}
+
+/// What the library cache says about the player's progress in one game. Steam refreshes it
+/// separately from the stats files, so it is only used to catch a schema that is out of date.
+#[derive(Debug, Default, PartialEq)]
+pub struct LibraryProgress {
+    /// API names listed as not yet unlocked.
+    pub unachieved: Vec<String>,
+    /// How many achievements Steam says the game has.
+    pub total: Option<usize>,
+}
+
+/// Progress from the library cache. Empty when the file is missing or unreadable.
+pub fn local_progress(paths: &SteamPaths, app_id: u32) -> LibraryProgress {
+    read_library_cache(paths, app_id).map(|json| parse_progress(&json)).unwrap_or_default()
+}
+
+fn read_library_cache(paths: &SteamPaths, app_id: u32) -> Option<Value> {
+    serde_json::from_slice(&fs::read(paths.library_cache_path(app_id)).ok()?).ok()
 }
 
 /// The file is an array of `[key, value]` pairs; achievements sit under `"achievements"`.
-fn parse_library_cache(json: &Value) -> Percents {
-    let mut percents = Percents::new();
-    let Some(data) = json
-        .as_array()
+fn achievements_data(json: &Value) -> Option<&Value> {
+    json.as_array()
         .into_iter()
         .flatten()
         .find_map(|pair| (pair.get(0)?.as_str()? == "achievements").then(|| pair.get(1)?.get("data")).flatten())
-    else {
+}
+
+fn parse_progress(json: &Value) -> LibraryProgress {
+    let Some(data) = achievements_data(json) else {
+        return LibraryProgress::default();
+    };
+    LibraryProgress {
+        unachieved: data
+            .get("vecUnachieved")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| Some(entry.get("strID")?.as_str()?.to_string()))
+            .collect(),
+        total: data.get("nTotal").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()),
+    }
+}
+
+fn parse_library_cache(json: &Value) -> Percents {
+    let mut percents = Percents::new();
+    let Some(data) = achievements_data(json) else {
         return percents;
     };
     for list in LIBRARY_CACHE_LISTS {
@@ -98,6 +131,18 @@ mod tests {
         assert!((percents["A"] - 1.8).abs() < 1e-6);
         assert!(!percents.contains_key("B"), "placeholder zeros are skipped");
         assert_eq!(percents["C"], 0.5);
+    }
+
+    #[test]
+    fn reads_library_cache_progress() {
+        let cache = json!([["achievements", {"version": 2, "data": {
+            "vecHighlight": [{"strID": "A"}],
+            "vecUnachieved": [{"strID": "C"}, {"flAchieved": 0.5}],
+            "nTotal": 4
+        }}]]);
+        let progress = parse_progress(&cache);
+        assert_eq!(progress, LibraryProgress { unachieved: vec!["C".into()], total: Some(4) });
+        assert_eq!(parse_progress(&json!([["usernews", {}]])), LibraryProgress::default());
     }
 
     #[test]

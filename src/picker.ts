@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { gradeLabel } from "./rarity";
+import { gradeLabel, platinumLabel } from "./rarity";
 
 type Source = "steam" | "gog";
-type Sort = "newest" | "rarest";
+type Sort = "newest" | "rarest" | "platinum";
+const SORTS: readonly Sort[] = ["newest", "rarest", "platinum"];
 
 interface PickerItem {
   source: Source;
@@ -14,12 +15,16 @@ interface PickerItem {
   icon: string;
   unlockedAt: number;
   rarity: number | null;
+  /** The achievement that completed its game. */
+  platinum: boolean;
   gameName: string;
 }
 
 interface PickerData {
   launchers: Source[];
   maxTrophies: number;
+  /** Trophies on each rail of the shelf. */
+  perRow: number;
   trophies: TrophyKey[];
   items: PickerItem[];
 }
@@ -37,8 +42,6 @@ const TABS: { source: Source; label: string; missing: string }[] = [
 ];
 const TAB_STORAGE_KEY = "picker-tab";
 const SORT_STORAGE_KEY = "picker-sort";
-/** Slabs per rail; matches PER_ROW in src-tauri/src/settings.rs. */
-const PER_RAIL = 6;
 const HINT_EMPTY = "Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.";
 const HINT_PLACED = "Click a trophy on the rail to take it off the shelf.";
 
@@ -64,6 +67,8 @@ const FALLBACK_ICON =
   '<path d="M12 14v4M8.5 20h7"/></svg>';
 
 let maxTrophies = 6;
+/** Slabs per rail, as on the shelf. */
+let perRail = 6;
 let launchers: Source[] = [];
 let items: PickerItem[] = [];
 let itemsByKey = new Map<string, PickerItem>();
@@ -132,8 +137,12 @@ function storedTab(): Source | null {
   return TABS.some((t) => t.source === value) ? (value as Source) : null;
 }
 
+function toSort(value: string | null): Sort {
+  return SORTS.find((s) => s === value) ?? "newest";
+}
+
 function storedSort(): Sort {
-  return readStored(SORT_STORAGE_KEY) === "rarest" ? "rarest" : "newest";
+  return toSort(readStored(SORT_STORAGE_KEY));
 }
 
 /** Items of the selected launcher; the sidebar, list, and search only cover these. */
@@ -200,11 +209,12 @@ function renderRails() {
   const previous = railKeys;
   const placed = trophies.slice(0, maxTrophies);
   railKeys = new Set(placed.map(keyOf));
-  const railCount = Math.max(1, Math.ceil(maxTrophies / PER_RAIL));
+  const railCount = Math.max(1, Math.ceil(maxTrophies / perRail));
+  railsEl.style.setProperty("--per-row", String(perRail));
   const rails: HTMLElement[] = [];
   for (let r = 0; r < railCount; r++) {
     const slots = el("div", "mini-slots");
-    for (let i = r * PER_RAIL; i < (r + 1) * PER_RAIL && i < maxTrophies; i++) {
+    for (let i = r * perRail; i < (r + 1) * perRail && i < maxTrophies; i++) {
       const key = placed[i];
       if (!key) {
         slots.append(el("span", "pslot"));
@@ -217,7 +227,9 @@ function renderRails() {
       const title = item ? item.title || item.apiName : "An achievement no longer found";
       slab.title = `${title}\nClick to take it off the shelf`;
       slab.setAttribute("aria-label", `Remove ${title} from the shelf`);
-      slab.append(gradeLabel(item?.rarity ?? null, "grade pslab-grade"), insert(item, false));
+      const box = insert(item, false);
+      if (item?.platinum) box.append(platinumLabel("platinum-band"));
+      slab.append(gradeLabel(item?.rarity ?? null, "grade pslab-grade"), box);
       slab.addEventListener("click", () => void setTrophy(key, false));
       slots.append(slab);
     }
@@ -273,7 +285,10 @@ function renderCard(item: PickerItem, showGame: boolean): HTMLButtonElement {
   const meta = el("span", "card-meta", formatDate(item.unlockedAt));
   if (showGame) meta.append(` · ${item.gameName}`);
   const foot = el("div", "card-foot");
-  foot.append(meta, gradeLabel(item.rarity, "grade card-grade"));
+  const grades = el("span", "card-grades");
+  if (item.platinum) grades.append(platinumLabel("grade card-grade"));
+  grades.append(gradeLabel(item.rarity, "grade card-grade"));
+  foot.append(meta, grades);
   const text = el("div", "card-text");
   text.append(head, el("div", "card-desc", item.description || "No description"), foot);
   card.append(insert(item, true), text);
@@ -297,6 +312,11 @@ function groupByGame(list: PickerItem[]): Map<string, PickerItem[]> {
 function byRarity(a: PickerItem, b: PickerItem): number {
   if (a.rarity === null || b.rarity === null) return (a.rarity === null ? 1 : 0) - (b.rarity === null ? 1 : 0);
   return a.rarity - b.rarity;
+}
+
+/** Platinums ahead of everything else; the sort is stable, so each part keeps its newest-first order. */
+function byPlatinum(a: PickerItem, b: PickerItem): number {
+  return Number(b.platinum) - Number(a.platinum);
 }
 
 function selectTab(source: Source, focus = false) {
@@ -410,10 +430,10 @@ function render() {
     return grid;
   };
 
-  if (sort === "rarest") {
-    // One ranked list across games, so the rarest pieces in the library come first.
+  if (sort === "rarest" || sort === "platinum") {
+    // One ranked list across games, so the rarest pieces, or the platinums, in the library come first.
     const section = el("section", "flat");
-    section.append(gridOf([...matches].sort(byRarity), selectedGame === ALL_GAMES));
+    section.append(gridOf([...matches].sort(sort === "rarest" ? byRarity : byPlatinum), selectedGame === ALL_GAMES));
     listEl.replaceChildren(section);
   } else {
     const sections: HTMLElement[] = [];
@@ -444,6 +464,7 @@ async function load() {
   }
   const changed = data.items.length !== items.length || data.items.some((item, i) => keyOf(item) !== keyOf(items[i]));
   maxTrophies = data.maxTrophies;
+  perRail = data.perRow;
   launchers = data.launchers;
   items = data.items;
   itemsByKey = new Map(items.map((i) => [keyOf(i), i]));
@@ -462,7 +483,7 @@ async function load() {
 
 sortEl.value = sort;
 sortEl.addEventListener("change", () => {
-  sort = sortEl.value === "rarest" ? "rarest" : "newest";
+  sort = toSort(sortEl.value);
   writeStored(SORT_STORAGE_KEY, sort);
   render();
   listEl.scrollTop = 0;

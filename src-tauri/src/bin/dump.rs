@@ -11,6 +11,11 @@ fn rarity(a: &Achievement) -> String {
     a.rarity.map_or_else(|| "-".to_string(), |r| format!("{r:.1}%"))
 }
 
+/// Flags the achievement that completed its game.
+fn platinum(a: &Achievement) -> &'static str {
+    if a.platinum { "  [PLATINUM]" } else { "" }
+}
+
 fn main() -> Result<(), String> {
     let arg = std::env::args().nth(1);
     let achievements = if arg.as_deref() == Some("--gog") {
@@ -20,7 +25,7 @@ fn main() -> Result<(), String> {
         let list = gog.load_all()?;
         for a in &list {
             let game = names.get(&a.game_key()).map_or(a.game_id.as_str(), String::as_str);
-            println!("{game:>24}  {:>10}  {:>6}  {}  —  {}", a.unlocked_at, rarity(a), a.title, a.description);
+            println!("{game:>24}  {:>10}  {:>6}  {}  —  {}{}", a.unlocked_at, rarity(a), a.title, a.description, platinum(a));
         }
         list
     } else {
@@ -33,10 +38,15 @@ fn main() -> Result<(), String> {
                 list.sort_by(|a, b| b.unlocked_at.cmp(&a.unlocked_at));
                 list
             }
-            None => stats::load_all(&paths).into_iter().take(20).collect(),
+            None => {
+                let all = stats::load_all(&paths);
+                let games: Vec<&str> = all.iter().filter(|a| a.platinum).map(|a| a.game_id.as_str()).collect();
+                println!("{} completed game(s): {}", games.len(), games.join(", "));
+                all.into_iter().take(20).collect()
+            }
         };
         for a in &list {
-            println!("{:>8}  {:>10}  {:>6}  {}  —  {}", a.game_id, a.unlocked_at, rarity(a), a.title, a.description);
+            println!("{:>8}  {:>10}  {:>6}  {}  —  {}{}", a.game_id, a.unlocked_at, rarity(a), a.title, a.description, platinum(a));
         }
         list
     };
