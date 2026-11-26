@@ -47,6 +47,8 @@ Built with [Tauri 2](https://v2.tauri.app/), TypeScript and Vite.
 
 ## Releases
 
-Every push to `main` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds signed installers and publishes them as a GitHub Release. The version is `<major>.<minor>.<run number>`, where major and minor come from `src-tauri/tauri.conf.json`.
+Day-to-day work goes on the `dev` branch, which doesn't build anything. To ship, merge `dev` into `main`.
+
+Every push to `main` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds signed installers and publishes them as a GitHub Release. The version is `<major>.<minor>.<run number>`, where major and minor come from `src-tauri/tauri.conf.json`. The release description is the `## Release notes` section of the merged PR's description (see [AGENTS.md](AGENTS.md)).
 
 Installed copies check `releases/latest/download/latest.json` when they start and install newer versions automatically. Update packages are signed with a key stored in the `TAURI_SIGNING_PRIVATE_KEY` repository secret. If that key is lost, installed copies can't update again.

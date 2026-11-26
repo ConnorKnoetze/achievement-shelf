@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -33,6 +34,7 @@ const onTopEl = byId<HTMLInputElement>("on-top");
 const autostartEl = byId<HTMLInputElement>("autostart");
 const statusEl = byId<HTMLParagraphElement>("status");
 const diagramEl = byId<HTMLDivElement>("levels-diagram");
+const versionEl = byId<HTMLSpanElement>("version");
 
 /** Slabs per level; matches PER_ROW in src-tauri/src/settings.rs. */
 const PER_ROW = 6;
@@ -164,3 +166,6 @@ autostartEl.addEventListener("change", () => void call("set_start_with_windows",
 // Changes made from the tray menu.
 listen<SettingsView>("settings-changed", (event) => render(event.payload));
 invoke<SettingsView>("get_settings").then(render).catch((err) => showStatus(String(err)));
+getVersion()
+  .then((version) => (versionEl.textContent = `v${version}`))
+  .catch(() => versionEl.parentElement?.remove());
