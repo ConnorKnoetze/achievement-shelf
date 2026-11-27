@@ -61,6 +61,31 @@ h1 {
   border-top: 1px solid var(--line);
 }
 
+.setting[hidden] {
+  display: none;
+}
+
+/* A sign-in form: its explanation above, then the fields. */
+.account-form {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.account-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.account-fields .link {
+  justify-self: start;
+  align-self: center;
+}
+
+.account-fields .btn {
+  justify-self: end;
+}
+
 .setting-text {
   display: flex;
   flex-direction: column;

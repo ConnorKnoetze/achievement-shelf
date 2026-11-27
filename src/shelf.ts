@@ -5,7 +5,7 @@ import { platinumLabel, rarityTier } from "./rarity";
 import { pngBase64, renderCanvas, rgbaBase64 } from "./share";
 
 interface ShelfItem {
-  source: "steam" | "gog" | "ubisoft" | "ea";
+  source: "steam" | "gog" | "ubisoft" | "ea" | "retro";
   gameId: string;
   apiName: string;
   title: string;

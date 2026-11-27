@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { dropPlace, findPlace, moveTo, type LevelGeometry, type Place } from "./levels";
 import { gradeLabel, platinumLabel, rarityTier } from "./rarity";
 
-type Source = "steam" | "gog" | "ubisoft" | "ea";
+type Source = "steam" | "gog" | "ubisoft" | "ea" | "retro";
 type Launcher = Source | "all";
 type View = "games" | "achievements";
 type Sort = "newest" | "rarest" | "platinum";
@@ -73,6 +73,12 @@ const LAUNCHERS: { value: Launcher; label: string; missing?: string; optional?: 
   { value: "gog", label: "GOG", missing: "GOG Galaxy was not found on this PC." },
   { value: "ubisoft", label: "Ubisoft", missing: "Ubisoft Connect was not found on this PC.", optional: true },
   { value: "ea", label: "EA", missing: "The EA app was not found on this PC.", optional: true },
+  {
+    value: "retro",
+    label: "RetroAchievements",
+    missing: "Sign in to RetroAchievements in Settings to see your unlocks here.",
+    optional: true,
+  },
 ];
 
 function sourceLabel(source: Source): string {

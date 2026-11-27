@@ -129,6 +129,33 @@
       </div>
     </section>
 
+    <section class="group" aria-labelledby="accounts-heading">
+      <div class="group-head">
+        <h2 id="accounts-heading" class="divider-card">Accounts</h2>
+      </div>
+      <div class="group-body divider-rule">
+        <div id="retro-signed-in" class="setting" hidden>
+          <div class="setting-text">
+            <span class="setting-label">RetroAchievements</span>
+            <span class="setting-hint">Signed in as <span id="retro-user"></span>. New unlocks show up within seconds while an emulator runs.</span>
+          </div>
+          <button id="retro-disconnect" class="btn" type="button">Sign out</button>
+        </div>
+        <form id="retro-form" class="setting account-form" hidden>
+          <div class="setting-text">
+            <span class="setting-label">RetroAchievements</span>
+            <span class="setting-hint">Optional. Your Web API key is in your RetroAchievements settings. It's kept in Windows Credential Manager.</span>
+          </div>
+          <div class="account-fields">
+            <input id="retro-username" class="input" placeholder="Username" aria-label="RetroAchievements username" autocomplete="username" spellcheck="false" required />
+            <input id="retro-key" class="input" type="password" placeholder="Web API key" aria-label="RetroAchievements Web API key" autocomplete="off" spellcheck="false" required />
+            <button id="retro-key-page" class="link" type="button">Get your API key</button>
+            <button id="retro-connect" class="btn" type="submit">Sign in</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
     <section class="group group-plain">
       <div class="group-body">
         <div class="setting">

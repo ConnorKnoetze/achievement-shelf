@@ -52,6 +52,14 @@ const statusEl = byId<HTMLParagraphElement>("status");
 const diagramEl = byId<HTMLDivElement>("levels-diagram");
 const versionEl = byId<HTMLSpanElement>("version");
 const resetEl = byId<HTMLButtonElement>("reset");
+const retroSignedInEl = byId<HTMLDivElement>("retro-signed-in");
+const retroUserEl = byId<HTMLSpanElement>("retro-user");
+const retroDisconnectEl = byId<HTMLButtonElement>("retro-disconnect");
+const retroFormEl = byId<HTMLFormElement>("retro-form");
+const retroUsernameEl = byId<HTMLInputElement>("retro-username");
+const retroKeyEl = byId<HTMLInputElement>("retro-key");
+const retroConnectEl = byId<HTMLButtonElement>("retro-connect");
+const retroKeyPageEl = byId<HTMLButtonElement>("retro-key-page");
 
 /** Levels drawn last time, so an added level can drop into place. */
 let drawn: { trophy: number; recent: number; perRow: number } | null = null;
@@ -223,6 +231,42 @@ resetEl.addEventListener("click", () => {
   disarmReset();
   void call("reset_settings", {});
 });
+
+/** Shows the RetroAchievements account, or the form to sign in when there is none. */
+function showRetro(username: string | null) {
+  retroSignedInEl.hidden = !username;
+  retroFormEl.hidden = !!username;
+  retroUserEl.textContent = username ?? "";
+}
+
+retroFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  retroConnectEl.disabled = true;
+  retroConnectEl.textContent = "Signing in…";
+  try {
+    const username = await invoke<string>("retro_connect", {
+      username: retroUsernameEl.value,
+      apiKey: retroKeyEl.value,
+    });
+    retroKeyEl.value = "";
+    showRetro(username);
+  } catch (err) {
+    showStatus(String(err));
+  } finally {
+    retroConnectEl.disabled = false;
+    retroConnectEl.textContent = "Sign in";
+  }
+});
+retroKeyPageEl.addEventListener("click", () => {
+  invoke("retro_open_key_page").catch((err) => showStatus(String(err)));
+});
+retroDisconnectEl.addEventListener("click", async () => {
+  await invoke("retro_disconnect").catch((err) => showStatus(String(err)));
+  showRetro(null);
+});
+invoke<string | null>("retro_account")
+  .then(showRetro)
+  .catch(() => showRetro(null));
 
 // Changes made from the tray menu.
 listen<SettingsView>("settings-changed", (event) => render(event.payload));

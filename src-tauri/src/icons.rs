@@ -10,7 +10,7 @@ use base64::Engine;
 
 use crate::achievement::Source;
 use crate::ubisoft::{self, UbisoftPaths};
-use crate::{ea, steam};
+use crate::{ea, retro, steam};
 
 /// Steam serves achievement icons from these hosts. Newer icons exist only on the first.
 const STEAM_CDNS: [&str; 2] = [
@@ -105,6 +105,10 @@ fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option
             let file = icon.strip_prefix(ea::ICON_HOST)?;
             is_safe_image_name(file).then(|| (icons.join("ea").join(file), vec![icon.to_string()]))
         }
+        Source::Retro => {
+            let file = icon.strip_prefix(retro::MEDIA_HOST)?.strip_prefix("Badge/")?;
+            is_safe_image_name(file).then(|| (icons.join("retro").join(file), vec![icon.to_string()]))
+        }
         // Read from the game's archive instead; see `ubisoft_icon`.
         Source::Ubisoft => None,
     }
@@ -183,6 +187,11 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<
             let cover = cover?;
             let file = cover.strip_prefix(ubisoft::ASSET_HOST)?;
             is_safe_image_name(file).then(|| (banners.join("ubisoft").join(file), vec![cover.to_string()]))
+        }
+        Source::Retro => {
+            let cover = cover?;
+            let file = cover.strip_prefix(retro::MEDIA_HOST)?.strip_prefix("Images/")?;
+            is_safe_image_name(file).then(|| (banners.join("retro").join(file), vec![cover.to_string()]))
         }
         Source::Ea => None,
     }
@@ -349,6 +358,13 @@ mod tests {
         assert!(locate(cache, Source::Ea, "1", "https://evil.example/achievements/icons/a.png").is_none());
         assert!(locate(cache, Source::Ea, "1", "https://achievements.gameservices.ea.com/achievements/icons/../a.png").is_none());
         assert!(locate(cache, Source::Ubisoft, "1", "1.png").is_none(), "read from the archive instead");
+
+        let badge = "https://media.retroachievements.org/Badge/250336.png";
+        let (path, urls) = locate(cache, Source::Retro, "1", badge).unwrap();
+        assert_eq!(path, cache.join("icons").join("retro").join("250336.png"));
+        assert_eq!(urls, [badge]);
+        assert!(locate(cache, Source::Retro, "1", "https://media.retroachievements.org/Images/1.png").is_none());
+        assert!(locate(cache, Source::Retro, "1", "https://evil.example/Badge/1.png").is_none());
     }
 
     #[test]
@@ -400,6 +416,10 @@ mod tests {
         assert!(locate_banner(cache, Source::Ubisoft, "635", Some("https://evil.example/ab.jpg")).is_none());
         assert!(locate_banner(cache, Source::Ubisoft, "635", None).is_none());
         assert!(locate_banner(cache, Source::Ea, "1", Some(ubi)).is_none());
+        let shot = "https://media.retroachievements.org/Images/085573.png";
+        let (path, _) = locate_banner(cache, Source::Retro, "1", Some(shot)).unwrap();
+        assert_eq!(path, cache.join("banners").join("retro").join("085573.png"));
+        assert!(locate_banner(cache, Source::Retro, "1", Some("https://media.retroachievements.org/Badge/1.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://evil.example/5a51d9_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/../x_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/5a51d9.png")).is_none());

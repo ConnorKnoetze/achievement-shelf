@@ -1,10 +1,14 @@
 pub mod achievement;
 pub mod ea;
 pub mod gog;
+pub mod retro;
 pub mod steam;
 pub mod ubisoft;
 
+mod accounts;
+mod browser;
 mod icons;
+mod processes;
 mod rarity;
 mod settings;
 mod share;
@@ -28,6 +32,7 @@ use achievement::{game_key, Achievement, Source};
 use ea::EaPaths;
 use gog::GogPaths;
 use rarity::RarityCache;
+use retro::Retro;
 use settings::{Settings, Theme, TrophyKey, MAX_LEVELS, MAX_PER_ROW, MAX_SCALE, MIN_PER_ROW, MIN_SCALE};
 use steam::SteamPaths;
 use ubisoft::UbisoftPaths;
@@ -85,6 +90,8 @@ struct AppState {
     hit_rect: Arc<Mutex<Option<HitRect>>>,
     /// Achievement images ready to drag out, by the id the shelf gave them (`prepare_share`).
     shares: Mutex<HashMap<String, PreparedShare>>,
+    /// Wakes the thread that syncs RetroAchievements.
+    retro: retro::Waker,
 }
 
 impl AppState {
@@ -207,6 +214,12 @@ async fn load_unlocked(data_dir: PathBuf) -> Result<Unlocked, String> {
             unlocked.achievements.extend(ea.load_all());
             unlocked.names.extend(ea.names());
         }
+        if let Some(retro) = Retro::locate(&data_dir) {
+            unlocked.launchers.push(Source::Retro);
+            unlocked.achievements.extend(retro.load_all());
+            unlocked.names.extend(retro.names());
+            unlocked.covers.extend(retro.banners());
+        }
         if unlocked.launchers.is_empty() {
             return Err("No supported launcher found".to_string());
         }
@@ -281,6 +294,7 @@ fn game_name(state: &AppState, achievement: &Achievement) -> String {
         Source::Gog => format!("GOG game {}", achievement.game_id),
         Source::Ubisoft => format!("Ubisoft game {}", achievement.game_id),
         Source::Ea => format!("EA game {}", achievement.game_id),
+        Source::Retro => format!("RetroAchievements game {}", achievement.game_id),
     })
 }
 
@@ -1115,6 +1129,32 @@ fn reset_settings(app: AppHandle) -> SettingsView {
     settings_view(&app)
 }
 
+/// The signed-in RetroAchievements username, if any.
+#[tauri::command]
+async fn retro_account() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(retro::username).await.ok().flatten()
+}
+
+/// Signs in to RetroAchievements and starts syncing; returns the username.
+#[tauri::command]
+async fn retro_connect(state: State<'_, AppState>, username: String, api_key: String) -> Result<String, String> {
+    let username = retro::connect(&state.client, &state.data_dir, &username, &api_key).await?;
+    state.retro.sync_now();
+    Ok(username)
+}
+
+/// Opens the RetroAchievements page that shows the user's Web API key.
+#[tauri::command]
+fn retro_open_key_page() -> Result<(), String> {
+    retro::open_key_page()
+}
+
+#[tauri::command]
+fn retro_disconnect(app: AppHandle, state: State<'_, AppState>) {
+    retro::disconnect(&state.data_dir);
+    let _ = app.emit(watch::UPDATED_EVENT, ());
+}
+
 #[tauri::command]
 fn set_start_with_windows(app: AppHandle, value: bool) -> Result<SettingsView, String> {
     set_autostart(&app, value)?;
@@ -1125,6 +1165,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         "refresh" => {
             icons::forget_misses();
+            app.state::<AppState>().retro.sync_now();
             let _ = app.emit(watch::UPDATED_EVENT, ());
         }
         "choose_trophies" => {
@@ -1484,14 +1525,19 @@ pub fn run() {
                 .and_then(|text| serde_json::from_str(&text).ok())
                 .unwrap_or_default();
             let rarity = RarityCache::load(cache_dir.join("rarity.json"));
+            let client = reqwest::Client::builder()
+                .user_agent("achievement-shelf/0.1")
+                .timeout(Duration::from_secs(10))
+                .build()?;
+            let handle = app.handle().clone();
+            let retro = retro::spawn(client.clone(), data_dir.clone(), move || {
+                let _ = handle.emit(watch::UPDATED_EVENT, ());
+            });
             let hit_rect = Arc::new(Mutex::new(None));
 
             // Managed before the window is shown so early front-end calls find the state.
             app.manage(AppState {
-                client: reqwest::Client::builder()
-                    .user_agent("achievement-shelf/0.1")
-                    .timeout(Duration::from_secs(10))
-                    .build()?,
+                client,
                 cache_dir,
                 data_dir: data_dir.clone(),
                 settings_path,
@@ -1501,6 +1547,7 @@ pub fn run() {
                 rarity,
                 hit_rect: hit_rect.clone(),
                 shares: Mutex::default(),
+                retro,
             });
             apply_theme(app.handle(), settings.theme);
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");
@@ -1546,7 +1593,11 @@ pub fn run() {
             set_keep_on_top,
             set_app_theme,
             reset_settings,
-            set_start_with_windows
+            set_start_with_windows,
+            retro_account,
+            retro_connect,
+            retro_open_key_page,
+            retro_disconnect
         ])
         .run(tauri::generate_context!())
         .expect("error while running Achievement Shelf");

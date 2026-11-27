@@ -15,6 +15,7 @@ pub enum Source {
     Gog,
     Ubisoft,
     Ea,
+    Retro,
 }
 
 impl fmt::Display for Source {
@@ -24,6 +25,7 @@ impl fmt::Display for Source {
             Source::Gog => "gog",
             Source::Ubisoft => "ubisoft",
             Source::Ea => "ea",
+            Source::Retro => "retro",
         })
     }
 }
@@ -37,14 +39,14 @@ pub fn game_key(source: Source, game_id: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct Achievement {
     pub source: Source,
-    /// Steam app ID, GOG release key such as `gog_1423049311`, Ubisoft product ID, or EA master
-    /// title ID.
+    /// Steam app ID, GOG release key such as `gog_1423049311`, Ubisoft product ID, EA master
+    /// title ID, or RetroAchievements game ID.
     pub game_id: String,
     pub api_name: String,
     pub title: String,
     pub description: String,
     pub hidden: bool,
-    /// Steam: icon file name on the community CDN. GOG and EA: full image
+    /// Steam: icon file name on the community CDN. GOG, EA and RetroAchievements: full image
     /// URL. Ubisoft: the icon's file name inside the game's achievement archive.
     pub icon: String,
     pub unlocked_at: u32,
