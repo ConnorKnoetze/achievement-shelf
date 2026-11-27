@@ -10,7 +10,7 @@ use base64::Engine;
 
 use crate::achievement::Source;
 use crate::ubisoft::{self, UbisoftPaths};
-use crate::{ea, retro, steam, xbox};
+use crate::{ea, epic, retro, steam, xbox};
 
 /// Steam serves achievement icons from these hosts. Newer icons exist only on the first.
 const STEAM_CDNS: [&str; 2] = [
@@ -115,13 +115,14 @@ fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option
             is_safe_image_name(file).then(|| (icons.join("retro").join(file), vec![icon.to_string()]))
         }
         Source::Xbox => xbox::is_image_url(icon).then(|| hashed_image(&icons, "xbox", icon)),
+        Source::Epic => epic::is_image_url(icon).then(|| hashed_image(&icons, "epic", icon)),
         // Read from the game's archive instead; see `ubisoft_icon`.
         Source::Ubisoft => None,
     }
 }
 
 /// Where an image is cached when its URL doesn't name a usable file (Xbox puts it in a query
-/// string): under `dir/source`, named by a hash of the
+/// string; Epic's names aren't known to be unique): under `dir/source`, named by a hash of the
 /// URL. The URL must already be checked against the source's hosts.
 fn hashed_image(dir: &Path, source: &str, url: &str) -> (PathBuf, Vec<String>) {
     use sha2::{Digest, Sha256};
@@ -173,7 +174,8 @@ pub async fn icon_data_url(
     if let Some(url) = remembered(&path) {
         return url;
     }
-    let square = (source == Source::Xbox).then_some(XBOX_ICON_SIZE);
+    // Epic icons are square already; this only caps their size.
+    let square = matches!(source, Source::Xbox | Source::Epic).then_some(XBOX_ICON_SIZE);
     let url = cached_data_url(client, &path, &urls, square, &format!("icon {icon} for {source} game {game_id}")).await;
     remember(path, &url);
     url
@@ -210,6 +212,12 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<
             is_safe_image_name(file).then(|| (banners.join("retro").join(file), vec![cover.to_string()]))
         }
         Source::Xbox => cover.filter(|c| xbox::is_image_url(c)).map(|c| hashed_image(&banners, "xbox", c)),
+        Source::Epic => cover.filter(|c| epic::is_image_url(c)).map(|c| {
+            let (path, original) = hashed_image(&banners, "epic", c);
+            // Epic's image service resizes on request; its full store art is up to 2560 wide.
+            let sized = if c.contains('?') { None } else { Some(format!("{c}?h=360&resize=1&w=640")) };
+            (path, sized.into_iter().chain(original).collect())
+        }),
         Source::Ea => None,
     }
 }

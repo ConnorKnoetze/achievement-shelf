@@ -1,5 +1,6 @@
 pub mod achievement;
 pub mod ea;
+pub mod epic;
 pub mod gog;
 pub mod retro;
 pub mod steam;
@@ -31,6 +32,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use achievement::{game_key, Achievement, Source};
 use ea::EaPaths;
+use epic::Epic;
 use gog::GogPaths;
 use rarity::RarityCache;
 use retro::Retro;
@@ -96,6 +98,8 @@ struct AppState {
     retro: retro::Waker,
     /// Wakes the thread that syncs Xbox.
     xbox: xbox::Waker,
+    /// Wakes the thread that syncs Epic.
+    epic: epic::Waker,
 }
 
 impl AppState {
@@ -230,6 +234,12 @@ async fn load_unlocked(data_dir: PathBuf) -> Result<Unlocked, String> {
             unlocked.names.extend(xbox.names());
             unlocked.covers.extend(xbox.banners());
         }
+        if let Some(epic) = Epic::locate(&data_dir) {
+            unlocked.launchers.push(Source::Epic);
+            unlocked.achievements.extend(epic.load_all());
+            unlocked.names.extend(epic.names());
+            unlocked.covers.extend(epic.banners());
+        }
         if unlocked.launchers.is_empty() {
             return Err("No supported launcher found".to_string());
         }
@@ -306,6 +316,7 @@ fn game_name(state: &AppState, achievement: &Achievement) -> String {
         Source::Ea => format!("EA game {}", achievement.game_id),
         Source::Retro => format!("RetroAchievements game {}", achievement.game_id),
         Source::Xbox => format!("Xbox game {}", achievement.game_id),
+        Source::Epic => "Epic game".to_string(),
     })
 }
 
@@ -1207,6 +1218,32 @@ fn xbox_disconnect(app: AppHandle, state: State<'_, AppState>) {
     let _ = app.emit(watch::UPDATED_EVENT, ());
 }
 
+/// The signed-in Epic display name, if any.
+#[tauri::command]
+async fn epic_account() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(epic::display_name).await.ok().flatten()
+}
+
+/// Signs in to Epic in a window of the app and starts syncing; returns the display name.
+#[tauri::command]
+async fn epic_connect(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let name = epic::connect(&app, &state.client, &state.data_dir).await?;
+    state.epic.sync_now();
+    Ok(name)
+}
+
+/// Stops a sign-in by closing its window.
+#[tauri::command]
+fn epic_cancel(app: AppHandle) {
+    epic::cancel_sign_in(&app);
+}
+
+#[tauri::command]
+fn epic_disconnect(app: AppHandle, state: State<'_, AppState>) {
+    epic::disconnect(&app, &state.data_dir);
+    let _ = app.emit(watch::UPDATED_EVENT, ());
+}
+
 #[tauri::command]
 fn set_start_with_windows(app: AppHandle, value: bool) -> Result<SettingsView, String> {
     set_autostart(&app, value)?;
@@ -1219,6 +1256,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
             icons::forget_misses();
             app.state::<AppState>().retro.sync_now();
             app.state::<AppState>().xbox.sync_now();
+            app.state::<AppState>().epic.sync_now();
             let _ = app.emit(watch::UPDATED_EVENT, ());
         }
         "choose_trophies" => {
@@ -1590,6 +1628,10 @@ pub fn run() {
             let xbox = xbox::spawn(client.clone(), data_dir.clone(), move || {
                 let _ = handle.emit(watch::UPDATED_EVENT, ());
             });
+            let handle = app.handle().clone();
+            let epic = epic::spawn(app.handle().clone(), client.clone(), data_dir.clone(), move || {
+                let _ = handle.emit(watch::UPDATED_EVENT, ());
+            });
             let hit_rect = Arc::new(Mutex::new(None));
 
             // Managed before the window is shown so early front-end calls find the state.
@@ -1606,6 +1648,7 @@ pub fn run() {
                 shares: Mutex::default(),
                 retro,
                 xbox,
+                epic,
             });
             apply_theme(app.handle(), settings.theme);
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");
@@ -1659,7 +1702,11 @@ pub fn run() {
             xbox_account,
             xbox_connect,
             xbox_cancel,
-            xbox_disconnect
+            xbox_disconnect,
+            epic_account,
+            epic_connect,
+            epic_cancel,
+            epic_disconnect
         ])
         .run(tauri::generate_context!())
         .expect("error while running Achievement Shelf");

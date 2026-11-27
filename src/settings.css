@@ -103,6 +103,20 @@ h1 {
   font-size: 12px;
 }
 
+/* A small outlined label beside a setting's name, such as "Experimental". */
+.setting-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
 /* Shelf levels: a drawing of the rails beside the steppers. */
 .levels {
   display: flex;

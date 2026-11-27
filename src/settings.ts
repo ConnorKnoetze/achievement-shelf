@@ -66,6 +66,12 @@ const xboxDisconnectEl = byId<HTMLButtonElement>("xbox-disconnect");
 const xboxSignedOutEl = byId<HTMLDivElement>("xbox-signed-out");
 const xboxHintEl = byId<HTMLSpanElement>("xbox-hint");
 const xboxConnectEl = byId<HTMLButtonElement>("xbox-connect");
+const epicSignedInEl = byId<HTMLDivElement>("epic-signed-in");
+const epicUserEl = byId<HTMLSpanElement>("epic-user");
+const epicDisconnectEl = byId<HTMLButtonElement>("epic-disconnect");
+const epicSignedOutEl = byId<HTMLDivElement>("epic-signed-out");
+const epicHintEl = byId<HTMLSpanElement>("epic-hint");
+const epicConnectEl = byId<HTMLButtonElement>("epic-connect");
 
 /** Levels drawn last time, so an added level can drop into place. */
 let drawn: { trophy: number; recent: number; perRow: number } | null = null;
@@ -309,6 +315,42 @@ xboxDisconnectEl.addEventListener("click", async () => {
 invoke<{ available: boolean; gamertag: string | null }>("xbox_account")
   .then((account) => showXbox(account.available, account.gamertag))
   .catch(() => showXbox(false, null));
+
+/** Shows the Epic account, or the button to sign in when there is none. */
+function showEpic(name: string | null) {
+  epicSignedInEl.hidden = !name;
+  epicSignedOutEl.hidden = !!name;
+  epicUserEl.textContent = name ?? "";
+}
+
+const EPIC_HINT = epicHintEl.textContent ?? "";
+/** Whether a sign-in window is open; the button then closes it. */
+let epicWaiting = false;
+epicConnectEl.addEventListener("click", async () => {
+  if (epicWaiting) {
+    void invoke("epic_cancel");
+    return;
+  }
+  epicWaiting = true;
+  epicConnectEl.textContent = "Cancel";
+  epicHintEl.textContent = "Sign in to Epic Games in the window that opened.";
+  try {
+    showEpic(await invoke<string>("epic_connect"));
+  } catch (err) {
+    if (String(err) !== "Sign-in cancelled.") showStatus(String(err));
+  } finally {
+    epicWaiting = false;
+    epicConnectEl.textContent = "Sign in";
+    epicHintEl.textContent = EPIC_HINT;
+  }
+});
+epicDisconnectEl.addEventListener("click", async () => {
+  await invoke("epic_disconnect").catch((err) => showStatus(String(err)));
+  showEpic(null);
+});
+invoke<string | null>("epic_account")
+  .then(showEpic)
+  .catch(() => showEpic(null));
 
 // Changes made from the tray menu.
 listen<SettingsView>("settings-changed", (event) => render(event.payload));

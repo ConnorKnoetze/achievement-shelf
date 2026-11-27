@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { dropPlace, findPlace, moveTo, type LevelGeometry, type Place } from "./levels";
 import { gradeLabel, platinumLabel, rarityTier } from "./rarity";
 
-type Source = "steam" | "gog" | "ubisoft" | "ea" | "retro" | "xbox";
+type Source = "steam" | "gog" | "ubisoft" | "ea" | "retro" | "xbox" | "epic";
 type Launcher = Source | "all";
 type View = "games" | "achievements";
 type Sort = "newest" | "rarest" | "platinum";
@@ -80,6 +80,7 @@ const LAUNCHERS: { value: Launcher; label: string; missing?: string; optional?: 
     optional: true,
   },
   { value: "xbox", label: "Xbox", missing: "Sign in to Xbox in Settings to see your unlocks here.", optional: true },
+  { value: "epic", label: "Epic", missing: "Sign in to Epic Games in Settings to see your unlocks here.", optional: true },
 ];
 
 function sourceLabel(source: Source): string {
