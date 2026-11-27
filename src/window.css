@@ -201,6 +201,56 @@ h2 {
   height: 14px;
 }
 
+/* Stepper: minus, the count, plus. */
+.stepper {
+  flex: none;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bench);
+}
+
+.stepper button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.stepper button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.stepper button:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--brass);
+}
+
+.stepper button:focus-visible {
+  outline-offset: -2px;
+}
+
+.stepper button:disabled {
+  color: var(--line-strong);
+  cursor: default;
+}
+
+.stepper output {
+  min-width: 26px;
+  text-align: center;
+}
+
 .field {
   position: relative;
   display: flex;

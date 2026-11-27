@@ -14,6 +14,18 @@
           <p id="hint" class="hint">Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.</p>
         </div>
         <span class="count"><span id="count" class="figure"></span> placed</span>
+        <div class="shelves">
+          <span class="muted" id="shelves-label">Shelves</span>
+          <div class="stepper" role="group" aria-labelledby="shelves-label">
+            <button id="shelf-remove" type="button" aria-label="Remove a trophy shelf">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+            </button>
+            <output id="shelf-count" class="figure" aria-live="polite"></output>
+            <button id="shelf-add" type="button" aria-label="Add a trophy shelf">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
+            </button>
+          </div>
+        </div>
         <button id="clear" class="btn" type="button">Clear shelf</button>
       </div>
       <div id="rails" class="rails" role="list" aria-label="Your trophy rail"></div>

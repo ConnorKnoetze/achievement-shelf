@@ -16,6 +16,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-updater",
+ "windows",
+ "windows-core",
  "winreg 0.55.0",
 ]
 

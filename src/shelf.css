@@ -137,7 +137,8 @@ body {
 }
 
 /* The trophy rail keeps the black bar and adds a brushed-brass front edge. */
-.row.trophy .rail {
+.row.trophy .rail,
+.share-rail {
   background:
     linear-gradient(to bottom, transparent 0 calc(100% - 5px), var(--brass-light) calc(100% - 5px), var(--brass-dark)),
     linear-gradient(
@@ -147,6 +148,37 @@ body {
       var(--rail-face) 4px calc(100% - 2px),
       var(--rail-base) calc(100% - 2px)
     );
+}
+
+/* A section's nameplate: a small plate screwed to the front face of its first rail, at the
+   left end so the slabs standing in the slot above stay clear of it. */
+.rail-label {
+  position: absolute;
+  top: 5px;
+  left: 18px;
+  z-index: 1;
+  padding: 1px 6px 0;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, #2c3035, #1b1d21);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+  font-family: var(--grade-face);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9aa1a9;
+  pointer-events: none;
+}
+
+.row.trophy .rail-label {
+  background: linear-gradient(to bottom, var(--brass-light), var(--brass-dark));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+  color: #2b1f0c;
 }
 
 /* The slot is the slab's hit box and never moves; only the slab inside it lifts, so the
@@ -624,4 +656,68 @@ body {
   font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--ink-muted);
+}
+
+/* The image made when a trophy is dragged off the shelf to share it: the slab standing on a
+   length of trophy rail beside its certificate, on the dark of the setup windows' bench. It is
+   only ever drawn by src/share.ts, never shown on the shelf. */
+.share-card {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: max-content;
+  padding: 22px 26px 22px 22px;
+  border-radius: 10px;
+  background: radial-gradient(120% 100% at 15% 0%, #2a2e34, #131518 55%, #0c0e10);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #eef0f2;
+}
+
+.share-stand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 136px;
+}
+
+/* Brought closer, as when lifted on the shelf; its foot sits down in the rail's slot. */
+.share-slab {
+  position: relative;
+  z-index: 2;
+  zoom: 1.6;
+  margin-bottom: -4px;
+}
+
+.share-card .slab,
+.share-preview .slab {
+  animation: none;
+  transition: none;
+}
+
+.share-rail {
+  align-self: stretch;
+  margin: 0;
+}
+
+.share-mark {
+  margin-top: 10px;
+  font-family: var(--grade-face);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6c737b;
+}
+
+.share-card .share-cert {
+  position: relative;
+  z-index: auto;
+  transition: none;
+}
+
+/* What follows the cursor while dragging out: the slab alone, with room for its shadow. */
+.share-preview {
+  width: max-content;
+  padding: 4px 8px 12px;
 }

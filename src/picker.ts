@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { dropPlace, findPlace, moveTo, type LevelGeometry, type Place } from "./levels";
 import { gradeLabel, platinumLabel } from "./rarity";
 
 type Source = "steam" | "gog";
@@ -22,11 +23,23 @@ interface PickerItem {
 
 interface PickerData {
   launchers: Source[];
-  maxTrophies: number;
   /** Trophies on each rail of the shelf. */
   perRow: number;
-  trophies: TrophyKey[];
+  /** Trophy levels on the shelf, and whether one can be added or removed. */
+  trophyRows: number;
+  canAddTrophyRow: boolean;
+  canRemoveTrophyRow: boolean;
+  /** Every saved trophy level, top first, including any past `trophyRows`. */
+  trophies: TrophyKey[][];
   items: PickerItem[];
+}
+
+/** The part of the settings view that `change_shelf_rows` returns which the picker uses. */
+interface ShelfLevels {
+  trophyRows: number;
+  perRow: number;
+  canAddRow: boolean;
+  canRemoveTrophyRow: boolean;
 }
 
 interface TrophyKey {
@@ -43,7 +56,7 @@ const TABS: { source: Source; label: string; missing: string }[] = [
 const TAB_STORAGE_KEY = "picker-tab";
 const SORT_STORAGE_KEY = "picker-sort";
 const HINT_EMPTY = "Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.";
-const HINT_PLACED = "Click a trophy on the rail to take it off the shelf.";
+const HINT_PLACED = "Drag trophies on the rails to rearrange them, or click one to take it off the shelf.";
 
 const listEl = document.getElementById("list") as HTMLElement;
 const countEl = document.getElementById("count") as HTMLSpanElement;
@@ -56,6 +69,9 @@ const clearEl = document.getElementById("clear") as HTMLButtonElement;
 const tabsEl = document.getElementById("tabs") as HTMLElement;
 const gamesEl = document.getElementById("games") as HTMLElement;
 const gameFilterEl = document.getElementById("game-filter") as HTMLInputElement;
+const shelfCountEl = document.getElementById("shelf-count") as HTMLOutputElement;
+const shelfAddEl = document.getElementById("shelf-add") as HTMLButtonElement;
+const shelfRemoveEl = document.getElementById("shelf-remove") as HTMLButtonElement;
 
 /** Sidebar key for the "All games" entry. */
 const ALL_GAMES = "";
@@ -72,7 +88,10 @@ let perRail = 6;
 let launchers: Source[] = [];
 let items: PickerItem[] = [];
 let itemsByKey = new Map<string, PickerItem>();
-let trophies: TrophyKey[] = [];
+/** The saved trophies of each level, top first. */
+let trophies: TrophyKey[][] = [];
+/** Trophy levels shown on the shelf. */
+let trophyRows = 1;
 let chosen = new Set<string>();
 /** Trophies drawn on the rail last time, so newly placed ones can drop into their slot. */
 let railKeys: Set<string> | null = null;
@@ -204,45 +223,398 @@ const iconObserver = new IntersectionObserver(
   { root: listEl, rootMargin: "300px" },
 );
 
-/** Draws the trophy rails: placed trophies in order, then empty slots up to the capacity. */
+/*
+ * The bench draws the trophy levels as the shelf does: one rail per level, stacked, each holding
+ * its own trophies packed together and centred. Trophies are dragged to rearrange them, along a
+ * rail or onto any other rail with room, and clicked to take them off the shelf.
+ */
+interface RailSlab {
+  /** What the slab shows, so a redraw can tell whether it is still current. */
+  look: string;
+  slab: HTMLButtonElement;
+}
+
+/** Rail slabs by trophy key, reused across redraws so their icons are not loaded again. */
+let railSlabs = new Map<string, RailSlab>();
+const slabKey = new WeakMap<HTMLElement, TrophyKey>();
+/** The slot rows of the rails drawn, top first. */
+let railRows: HTMLElement[] = [];
+/** Slabs of the trophies the shelf shows on each level, in order; only these can be moved. */
+let shownSlabs: HTMLButtonElement[][] = [];
+/** Slabs of each level's trophies no longer found on disk. The shelf skips them, but they still take room. */
+let missingSlabs: HTMLButtonElement[][] = [];
+
+const lookOf = (item: PickerItem | undefined) =>
+  item ? `${item.title}|${item.apiName}|${item.rarity}|${item.platinum}|${item.icon}` : "missing";
+
+function railSlab(key: TrophyKey, item: PickerItem | undefined, isNew: boolean): HTMLButtonElement {
+  const k = keyOf(key);
+  const look = lookOf(item);
+  const previous = railSlabs.get(k);
+  if (previous?.look === look) {
+    // Only a slab made by this redraw drops in; a reused one must not replay it.
+    previous.slab.classList.remove("new");
+    return previous.slab;
+  }
+  const slab = el("button", isNew ? "pslab acrylic new" : "pslab acrylic");
+  slab.type = "button";
+  const title = item ? item.title || item.apiName : "An achievement no longer found";
+  if (item) {
+    slab.classList.add("movable");
+    slab.title = `${title}\nDrag to rearrange, click to take it off the shelf`;
+    slab.setAttribute("aria-keyshortcuts", "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown");
+  } else {
+    slab.title = `${title}\nClick to take it off the shelf`;
+  }
+  slab.setAttribute("aria-label", `Remove ${title} from the shelf`);
+  const box = insert(item, false);
+  if (item?.platinum) box.append(platinumLabel("platinum-band"));
+  slab.append(gradeLabel(item?.rarity ?? null, "grade pslab-grade"), box);
+  slabKey.set(slab, key);
+  // Pointer presses capture the pointer for dragging, so their clicks are handled in
+  // `endRailDrag`; this one is the keyboard's.
+  slab.addEventListener("click", (event) => {
+    if (event.detail === 0) void setTrophy(key, false);
+  });
+  slab.addEventListener("pointerdown", (event) => startRailDrag(event, slab));
+  slab.addEventListener("keydown", (event) => {
+    const steps: Record<string, [number, number]> = {
+      ArrowLeft: [0, -1],
+      ArrowRight: [0, 1],
+      ArrowUp: [-1, 0],
+      ArrowDown: [1, 0],
+    };
+    const step = steps[event.key];
+    if (!step || !event.altKey || !item) return;
+    event.preventDefault();
+    moveSlab(slab, step[0], step[1]);
+  });
+  return slab;
+}
+
+/** Puts each level's slabs (then its missing trophies) on its rail; moved slabs slide over. */
+function layoutRails(levels: HTMLButtonElement[][], animate: boolean) {
+  const all = levels.flat().concat(missingSlabs.flat());
+  const before = animate ? new Map(all.map((slab) => [slab, slab.getBoundingClientRect()])) : null;
+  railRows.forEach((row, r) => {
+    const slabs = [...(levels[r] ?? []), ...(missingSlabs[r] ?? [])];
+    const current = row.children;
+    if (current.length !== slabs.length || slabs.some((slab, i) => current[i] !== slab)) row.replaceChildren(...slabs);
+  });
+  if (!before || reducedMotion()) return;
+  for (const [slab, from] of before) {
+    const to = slab.getBoundingClientRect();
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    if (!dx && !dy) continue;
+    slab.getAnimations().forEach((a) => a.cancel());
+    slab.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], {
+      duration: 200,
+      easing: LIFT_EASING,
+    });
+  }
+}
+
+/** How many trophies the rails show. */
+const placedCount = () => shownSlabs.flat().length + missingSlabs.flat().length;
+
 function renderRails() {
+  // A redraw would pull the carried slab out from under the pointer; it runs after the drop.
+  if (railDrag) {
+    railsStale = true;
+    return;
+  }
   const previous = railKeys;
-  const placed = trophies.slice(0, maxTrophies);
-  railKeys = new Set(placed.map(keyOf));
-  const railCount = Math.max(1, Math.ceil(maxTrophies / perRail));
-  railsEl.style.setProperty("--per-row", String(perRail));
-  const rails: HTMLElement[] = [];
-  for (let r = 0; r < railCount; r++) {
-    const slots = el("div", "mini-slots");
-    for (let i = r * perRail; i < (r + 1) * perRail && i < maxTrophies; i++) {
-      const key = placed[i];
-      if (!key) {
-        slots.append(el("span", "pslot"));
-        continue;
-      }
+  const next = new Map<string, RailSlab>();
+  railKeys = new Set();
+  shownSlabs = [];
+  missingSlabs = [];
+  for (let l = 0; l < trophyRows; l++) {
+    // As on the shelf: the level's trophies found on disk in their saved order, up to what it
+    // holds. Ones no longer found follow, so they can still be taken off.
+    const level = trophies[l] ?? [];
+    const placed = [
+      ...level.filter((k) => itemsByKey.has(keyOf(k))),
+      ...level.filter((k) => !itemsByKey.has(keyOf(k))),
+    ].slice(0, perRail);
+    const shown: HTMLButtonElement[] = [];
+    const missing: HTMLButtonElement[] = [];
+    for (const key of placed) {
       const item = itemsByKey.get(keyOf(key));
-      const isNew = previous !== null && !previous.has(keyOf(key));
-      const slab = el("button", isNew ? "pslab acrylic new" : "pslab acrylic");
-      slab.type = "button";
-      const title = item ? item.title || item.apiName : "An achievement no longer found";
-      slab.title = `${title}\nClick to take it off the shelf`;
-      slab.setAttribute("aria-label", `Remove ${title} from the shelf`);
-      const box = insert(item, false);
-      if (item?.platinum) box.append(platinumLabel("platinum-band"));
-      slab.append(gradeLabel(item?.rarity ?? null, "grade pslab-grade"), box);
-      slab.addEventListener("click", () => void setTrophy(key, false));
-      slots.append(slab);
+      const slab = railSlab(key, item, previous !== null && !previous.has(keyOf(key)));
+      next.set(keyOf(key), { look: lookOf(item), slab });
+      railKeys.add(keyOf(key));
+      (item ? shown : missing).push(slab);
     }
+    shownSlabs.push(shown);
+    missingSlabs.push(missing);
+  }
+  railSlabs = next;
+
+  railsEl.style.setProperty("--per-row", String(perRail));
+  railRows = [];
+  const rails: HTMLElement[] = [];
+  for (let r = 0; r < trophyRows; r++) {
+    const slots = el("div", "mini-slots");
+    railRows.push(slots);
     const rail = el("div", "mini-rail");
     rail.setAttribute("role", "listitem");
     rail.append(slots, el("div", "rail trophy"));
     rails.push(rail);
   }
   railsEl.replaceChildren(...rails);
+  layoutRails(shownSlabs, false);
+  if (placedCount() === 0) railRows[0].append(el("span", "rail-placard", "Pick achievements below"));
 }
 
-function updateChosen(keys: TrophyKey[]) {
-  trophies = keys;
+/** Saves `levels` as the trophies the shelf shows on each level. */
+function saveLevels(levels: HTMLButtonElement[][]) {
+  const keys = levels.map((level) => level.map((slab) => slabKey.get(slab)!));
+  // The same as `move_trophies`: trophies not listed stay on their level, after the listed ones.
+  const listed = new Set(keys.flat().map(keyOf));
+  trophies = trophies.map((level, l) =>
+    l < keys.length ? [...keys[l], ...level.filter((k) => !listed.has(keyOf(k)))] : level,
+  );
+  for (let l = trophies.length; l < keys.length; l++) trophies.push(keys[l]);
+  shownSlabs = levels;
+  invoke("move_trophies", {
+    levels: keys.map((level) => level.map(({ source, gameId, apiName }) => ({ source, gameId, apiName }))),
+  }).catch((err) => {
+    showStatus(String(err));
+    void load();
+  });
+}
+
+/** How many trophies each level holds besides `slab`, and how many of those can be moved. */
+function levelCounts(levels: HTMLButtonElement[][], slab: HTMLButtonElement) {
+  const movable = levels.map((level) => level.filter((other) => other !== slab).length);
+  return { movable, others: movable.map((count, l) => count + (missingSlabs[l]?.length ?? 0)) };
+}
+
+/** Moves `slab` from the keyboard: along its rail, or to the end of the rail above or below. */
+function moveSlab(slab: HTMLButtonElement, levelStep: number, indexStep: number) {
+  const from = findPlace(shownSlabs, slab);
+  if (railDrag || from.level < 0) return;
+  const { movable, others } = levelCounts(shownSlabs, slab);
+  let to: Place;
+  if (levelStep) {
+    const level = from.level + levelStep;
+    if (level < 0 || level >= shownSlabs.length || others[level] >= perRail) return;
+    to = { level, index: movable[level] };
+  } else {
+    const index = from.index + indexStep;
+    if (index < 0 || index > movable[from.level]) return;
+    to = { level: from.level, index };
+  }
+  const levels = moveTo(shownSlabs, slab, to);
+  layoutRails(levels, true);
+  saveLevels(levels);
+  slab.focus();
+}
+
+/*
+ * Dragging works as on the shelf. The pointer is captured on the rails, not the slab, because the
+ * slab moves between rails while it is carried. The slab stays in place, faded, and a copy of it
+ * follows the pointer. The rails are measured once when the drag starts (see `dropPlace`). Near
+ * the top or bottom edge, the rails scroll to reach hidden levels.
+ */
+interface RailDrag {
+  slab: HTMLButtonElement;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  /** The pointer left a slab that cannot move, so letting go is not a click. */
+  cancelled: boolean;
+  ghost: HTMLElement | null;
+  initial: HTMLButtonElement[][];
+  levels: HTMLButtonElement[][];
+  /** The rails, in their content coordinates. */
+  geometry: LevelGeometry;
+  /** Latest pointer position, for redrawing while the rails scroll. */
+  pointerX: number;
+  pointerY: number;
+  scrollFrame: number;
+}
+
+const DRAG_THRESHOLD = 4;
+/** How close (px) to the rails' top or bottom edge the pointer scrolls them, and the top speed (px/frame). */
+const SCROLL_EDGE = 32;
+const SCROLL_SPEED = 12;
+const LIFT_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let railDrag: RailDrag | null = null;
+/** The rails changed during a drag and are redrawn after it. */
+let railsStale = false;
+
+const ghostTransform = (x: number, y: number, carried: boolean) =>
+  `translate3d(${x}px, ${y}px, 0)${carried ? " rotate(-3deg) scale(1.05)" : ""}`;
+
+function measureRails(slab: HTMLElement): LevelGeometry {
+  const gap = parseFloat(getComputedStyle(railRows[0]).columnGap) || 0;
+  return {
+    bandEnds: railRows.map((row, r) => {
+      const rail = row.parentElement!;
+      const next = railRows[r + 1]?.parentElement;
+      return next ? (rail.offsetTop + rail.offsetHeight + next.offsetTop) / 2 : Infinity;
+    }),
+    centers: railRows.map((row) => row.offsetLeft + row.offsetWidth / 2),
+    pitch: slab.offsetWidth + gap,
+  };
+}
+
+function startRailDrag(event: PointerEvent, slab: HTMLButtonElement) {
+  if (event.button !== 0 || railDrag) return;
+  const box = slab.getBoundingClientRect();
+  railDrag = {
+    slab,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: event.clientX - box.left,
+    offsetY: event.clientY - box.top,
+    cancelled: false,
+    ghost: null,
+    initial: shownSlabs,
+    levels: shownSlabs,
+    geometry: measureRails(slab),
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+    scrollFrame: 0,
+  };
+  railsEl.setPointerCapture(event.pointerId);
+}
+
+/** Moves the carried slab's place to follow the pointer. */
+function updateDrop(d: RailDrag) {
+  const origin = railsEl.getBoundingClientRect();
+  const x = d.pointerX - origin.left + railsEl.scrollLeft;
+  const y = d.pointerY - origin.top + railsEl.scrollTop;
+  const { movable, others } = levelCounts(d.levels, d.slab);
+  const current = findPlace(d.levels, d.slab);
+  const place = dropPlace(x, y, d.geometry, others, movable, perRail, current);
+  if (place.level === current.level && place.index === current.index) return;
+  d.levels = moveTo(d.levels, d.slab, place);
+  layoutRails(d.levels, true);
+}
+
+/** Scrolls the rails while the carried slab is held near their top or bottom edge. */
+function autoScroll() {
+  const d = railDrag;
+  if (!d?.ghost) return;
+  d.scrollFrame = 0;
+  const box = railsEl.getBoundingClientRect();
+  const depth = Math.max(d.pointerY - (box.bottom - SCROLL_EDGE), 0) - Math.max(box.top + SCROLL_EDGE - d.pointerY, 0);
+  if (!depth) return;
+  const before = railsEl.scrollTop;
+  railsEl.scrollTop += Math.sign(depth) * Math.min(Math.abs(depth) / SCROLL_EDGE, 1) * SCROLL_SPEED;
+  if (railsEl.scrollTop === before) return;
+  updateDrop(d);
+  d.scrollFrame = requestAnimationFrame(autoScroll);
+}
+
+/** Ends the drag; saves the new levels when `save` and they changed, otherwise puts them back. */
+function endRailDrag(save: boolean) {
+  const d = railDrag;
+  if (!d) return;
+  railDrag = null;
+  cancelAnimationFrame(d.scrollFrame);
+  if (railsEl.hasPointerCapture(d.pointerId)) railsEl.releasePointerCapture(d.pointerId);
+  // Let go without moving far enough to pick it up: a click.
+  if (!d.ghost && !d.cancelled && save) void setTrophy(slabKey.get(d.slab)!, false);
+  if (d.ghost) {
+    railsEl.classList.remove("dragging");
+    const changed = d.levels.some((level, l) => level.length !== d.initial[l].length || level.some((s, i) => s !== d.initial[l][i]));
+    if (changed && save) saveLevels(d.levels);
+    else if (changed) layoutRails(d.initial, true);
+    const ghost = d.ghost;
+    const finish = () => {
+      ghost.remove();
+      d.slab.classList.remove("drag-source");
+    };
+    if (reducedMotion() || !d.slab.isConnected) {
+      finish();
+    } else {
+      // Glides into the slab's place, then shows the slab again.
+      const to = d.slab.getBoundingClientRect();
+      ghost
+        .animate([{ transform: ghost.style.transform }, { transform: ghostTransform(to.left, to.top, false) }], {
+          duration: 180,
+          easing: LIFT_EASING,
+          fill: "forwards",
+        })
+        .finished.then(finish, finish);
+    }
+  }
+  if (railsStale) {
+    railsStale = false;
+    renderRails();
+  }
+}
+
+railsEl.addEventListener("pointermove", (event) => {
+  const d = railDrag;
+  if (!d || event.pointerId !== d.pointerId) return;
+  if (!d.ghost) {
+    if (Math.hypot(event.clientX - d.startX, event.clientY - d.startY) < DRAG_THRESHOLD) return;
+    if (!d.slab.classList.contains("movable")) {
+      d.cancelled = true;
+      return;
+    }
+    const box = d.slab.getBoundingClientRect();
+    const ghost = d.slab.cloneNode(true) as HTMLElement;
+    ghost.classList.remove("new");
+    ghost.classList.add("drag-ghost");
+    ghost.removeAttribute("title");
+    ghost.style.width = `${box.width}px`;
+    ghost.style.height = `${box.height}px`;
+    ghost.style.transformOrigin = `${d.offsetX}px ${d.offsetY}px`;
+    document.body.append(ghost);
+    d.ghost = ghost;
+    d.slab.classList.add("drag-source");
+    railsEl.classList.add("dragging");
+  }
+  d.pointerX = event.clientX;
+  d.pointerY = event.clientY;
+  d.ghost.style.transform = ghostTransform(event.clientX - d.offsetX, event.clientY - d.offsetY, true);
+  updateDrop(d);
+  if (!d.scrollFrame) d.scrollFrame = requestAnimationFrame(autoScroll);
+});
+railsEl.addEventListener("pointerup", (event) => {
+  if (railDrag && event.pointerId === railDrag.pointerId) endRailDrag(true);
+});
+railsEl.addEventListener("pointercancel", () => endRailDrag(false));
+railsEl.addEventListener("lostpointercapture", () => endRailDrag(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && railDrag) endRailDrag(false);
+});
+
+/** Shows the trophy levels and their limits, and resizes the rails to match. */
+function showShelves(levels: number, rowLength: number, canAdd: boolean, canRemove: boolean) {
+  trophyRows = levels;
+  maxTrophies = levels * rowLength;
+  perRail = rowLength;
+  shelfCountEl.value = String(levels);
+  shelfAddEl.disabled = !canAdd;
+  shelfAddEl.title = canAdd ? "Add a trophy shelf" : "The shelf is full. Remove a recent level in Settings to make room.";
+  shelfRemoveEl.disabled = !canRemove;
+  shelfRemoveEl.title = canRemove ? "Remove a trophy shelf" : "The shelf keeps at least one trophy level.";
+}
+
+async function changeShelves(add: boolean) {
+  try {
+    const view = await invoke<ShelfLevels>("change_shelf_rows", { trophy: true, add });
+    showShelves(view.trophyRows, view.perRow, view.canAddRow, view.canRemoveTrophyRow);
+    updateChosen(trophies);
+  } catch (err) {
+    showStatus(String(err));
+  }
+}
+
+function updateChosen(levels: TrophyKey[][]) {
+  trophies = levels;
+  const keys = levels.flat();
   chosen = new Set(keys.map(keyOf));
   for (const [key, card] of cards) {
     const on = chosen.has(key);
@@ -256,15 +628,15 @@ function updateChosen(keys: TrophyKey[]) {
   for (const [source, button] of tabButtons) {
     button.classList.toggle("has-trophy", keys.some((k) => k.source === source));
   }
-  countEl.textContent = `${Math.min(chosen.size, maxTrophies)} / ${maxTrophies}`;
   hintEl.textContent = chosen.size ? HINT_PLACED : HINT_EMPTY;
   clearEl.disabled = chosen.size === 0;
   renderRails();
+  countEl.textContent = `${placedCount()} / ${maxTrophies}`;
 }
 
 async function setTrophy(key: TrophyKey, trophy: boolean) {
   try {
-    const keys = await invoke<TrophyKey[]>("set_trophy", {
+    const keys = await invoke<TrophyKey[][]>("set_trophy", {
       key: { source: key.source, gameId: key.gameId, apiName: key.apiName },
       trophy,
     });
@@ -463,8 +835,7 @@ async function load() {
     return;
   }
   const changed = data.items.length !== items.length || data.items.some((item, i) => keyOf(item) !== keyOf(items[i]));
-  maxTrophies = data.maxTrophies;
-  perRail = data.perRow;
+  showShelves(data.trophyRows, data.perRow, data.canAddTrophyRow, data.canRemoveTrophyRow);
   launchers = data.launchers;
   items = data.items;
   itemsByKey = new Map(items.map((i) => [keyOf(i), i]));
@@ -495,5 +866,7 @@ clearEl.addEventListener("click", () => {
     .then(() => updateChosen([]))
     .catch((err) => showStatus(String(err)));
 });
+shelfAddEl.addEventListener("click", () => void changeShelves(true));
+shelfRemoveEl.addEventListener("click", () => void changeShelves(false));
 listen("achievements-updated", () => void load());
 void load();

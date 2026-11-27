@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { dropPlace, findPlace, moveTo, type LevelGeometry } from "./levels";
 import { platinumLabel, rarityTier } from "./rarity";
+import { pngBase64, renderCanvas, rgbaBase64 } from "./share";
 
 interface ShelfItem {
   source: "steam" | "gog";
@@ -24,7 +26,10 @@ interface Shelf {
   /** Rows of the trophy shelf; at least 1. */
   trophyRows: number;
   perRow: number;
-  trophies: ShelfItem[];
+  /** The trophies on each trophy level, top first. A level may be empty. */
+  trophies: ShelfItem[][];
+  /** Whether each trophy level has no room for another; trophies missing from disk take room unseen. */
+  trophyFull: boolean[];
   items: ShelfItem[];
   /** Banner `data:` URLs keyed by game (see `gameKeyOf`); games without one are left out. */
   banners: Record<string, string>;
@@ -107,8 +112,8 @@ function certificateGrade(item: ShelfItem): HTMLElement {
   return label;
 }
 
-function showTooltip(item: ShelfItem, anchor: HTMLElement) {
-  tooltipAnchor = anchor;
+/** The certificate's contents, and whether it has a banner. */
+function certificate(item: ShelfItem): { children: HTMLElement[]; hasBanner: boolean } {
   const children: HTMLElement[] = [];
   const banner = banners[gameKeyOf(item)];
   if (banner) {
@@ -128,8 +133,13 @@ function showTooltip(item: ShelfItem, anchor: HTMLElement) {
   if (item.description) children.push(el("p", "cert-desc", item.description));
   if (item.platinum) children.push(platinumLabel("grade cert-grade cert-platinum", "Game completed"));
   children.push(certificateGrade(item));
+  return { children, hasBanner: Boolean(banner) };
+}
 
-  tooltipEl.classList.toggle("has-banner", Boolean(banner));
+function showTooltip(item: ShelfItem, anchor: HTMLElement) {
+  tooltipAnchor = anchor;
+  const { children, hasBanner } = certificate(item);
+  tooltipEl.classList.toggle("has-banner", hasBanner);
   tooltipEl.replaceChildren(...children);
   tooltipEl.hidden = false;
 
@@ -297,13 +307,13 @@ shelvesEl.addEventListener(
 shelvesEl.addEventListener("pointerleave", resetTilt);
 
 /*
- * Trophies are dragged to reorder them, across trophy rows too. The pointer is captured on
- * the shelves element, not the slot, because the slot moves between rows while it is dragged.
- * The slot stays in place as a faded placeholder and a copy of its slab follows the pointer.
+ * Trophies are dragged to rearrange them, along a trophy row or onto any other trophy row with
+ * room. The pointer is captured on the shelves element, not the slot, because the slot moves
+ * between rows while it is dragged. The slot stays in place as a faded placeholder and a copy of
+ * its slab follows the pointer.
  *
- * Rows always hold `perRow` trophies in turn, so the place of slot k does not depend on the
- * order. Those places are measured once when the drag starts; measuring live would read slots
- * mid-slide and flip the drop target back and forth under a still pointer.
+ * The rows are measured once when the drag starts (see `dropPlace`); measuring live would read
+ * slots mid-slide and flip the drop target back and forth under a still pointer.
  */
 interface Drag {
   slot: HTMLElement;
@@ -313,27 +323,34 @@ interface Drag {
   offsetX: number;
   offsetY: number;
   ghost: HTMLElement | null;
-  initial: HTMLElement[];
-  order: HTMLElement[];
-  /** Centre of each trophy place, in `.shelves` coordinates. */
-  places: { x: number; y: number }[];
+  /** The trophy slots on each trophy row, top first: as picked up, and as now arranged. */
+  initial: HTMLElement[][];
+  levels: HTMLElement[][];
+  /** The trophy rows, in `.shelves` coordinates. */
+  geometry: LevelGeometry;
+  /** The row the trophy was picked up from; it always has room to take it back. */
+  fromLevel: number;
   /** Latest pointer position, drawn on the next frame. */
   pointerX: number;
   pointerY: number;
   frame: number;
   /** The ghost's swing: angle (deg) and its rate (deg/s), driven by the pointer's speed. */
   swing: { angle: number; rate: number; speed: number; lastX: number; lastTime: number };
+  /** The images for dragging the trophy out (see `dragOut`): kept, or prepared since it was picked up. */
+  share: Promise<PreparedShare> | null;
 }
 
 const DRAG_THRESHOLD = 4;
-/** How much closer (px) another place must be before the drop target moves to it. */
-const DROP_HYSTERESIS = 6;
 const trophyOf = new WeakMap<HTMLElement, ShelfItem>();
 let perRow = 6;
+/** Whether each trophy row is full, from the last shelf drawn. */
+let trophyFull: boolean[] = [];
 let drag: Drag | null = null;
 let pendingRefresh = false;
 
-const trophySlots = () => [...shelvesEl.querySelectorAll<HTMLElement>(".row.trophy .slot")];
+const trophyRowItems = () => [...shelvesEl.querySelectorAll<HTMLElement>(".row.trophy .row-items")];
+const trophyLevels = () =>
+  trophyRowItems().map((row) => [...row.children].filter((node): node is HTMLElement => node.classList.contains("slot")));
 
 /** Top-left of `slot`'s place in client coordinates, ignoring transforms and animations. */
 function placeOf(slot: HTMLElement) {
@@ -341,13 +358,12 @@ function placeOf(slot: HTMLElement) {
   return { left: origin.left + slot.offsetLeft, top: origin.top + slot.offsetTop };
 }
 
-/** Puts the trophy slots in `order`, filling the trophy rows in turn; others slide over. */
-function layoutTrophies(order: HTMLElement[]) {
-  const before = new Map(order.map((slot) => [slot, slot.getBoundingClientRect()]));
-  for (const slot of order) slot.getAnimations().forEach((a) => a.cancel());
-  shelvesEl.querySelectorAll(".row.trophy .row-items").forEach((row, r) => {
-    setChildren(row, order.slice(r * perRow, (r + 1) * perRow));
-  });
+/** Puts the trophy slots on the trophy rows as `levels` says; others slide over. */
+function layoutTrophies(levels: HTMLElement[][]) {
+  const all = levels.flat();
+  const before = new Map(all.map((slot) => [slot, slot.getBoundingClientRect()]));
+  for (const slot of all) slot.getAnimations().forEach((a) => a.cancel());
+  trophyRowItems().forEach((row, r) => setChildren(row, levels[r] ?? []));
   if (reducedMotion()) return;
   for (const [slot, from] of before) {
     const to = slot.getBoundingClientRect();
@@ -362,26 +378,30 @@ function layoutTrophies(order: HTMLElement[]) {
   }
 }
 
-/** Where the dragged slot would go: the place nearest the pointer, with some hysteresis. */
-function dropOrder(d: Drag, x: number, y: number): HTMLElement[] {
+/** The trophy rows' bands, centres and slot spacing, in `.shelves` coordinates. */
+function measureTrophyRows(slot: HTMLElement): LevelGeometry {
+  const rows = trophyRowItems();
+  const gap = parseFloat(getComputedStyle(rows[0]).columnGap) || 0;
+  return {
+    bandEnds: rows.map((items, r) => {
+      const row = items.parentElement!;
+      return r < rows.length - 1 ? row.offsetTop + row.offsetHeight : Infinity;
+    }),
+    centers: rows.map((items) => items.offsetLeft + items.offsetWidth / 2),
+    pitch: slot.offsetWidth + gap,
+  };
+}
+
+/** The trophy rows with the dragged slot where the pointer would drop it, or `d.levels` unchanged. */
+function dropLevels(d: Drag, x: number, y: number): HTMLElement[][] {
   const origin = shelvesEl.getBoundingClientRect();
-  const px = x - origin.left;
-  const py = y - origin.top;
-  const distance = (i: number) => Math.hypot(px - d.places[i].x, py - d.places[i].y);
-  const current = d.order.indexOf(d.slot);
-  let target = current;
-  let best = distance(current);
-  d.places.forEach((_, i) => {
-    const dist = distance(i);
-    if (dist < best) {
-      best = dist;
-      target = i;
-    }
-  });
-  if (target === current || best + DROP_HYSTERESIS > distance(current)) return d.order;
-  const others = d.order.filter((slot) => slot !== d.slot);
-  others.splice(target, 0, d.slot);
-  return others;
+  const movable = d.levels.map((level) => level.filter((slot) => slot !== d.slot).length);
+  // A row other than its own is full when the backend says so, which counts trophies not shown.
+  const others = movable.map((count, l) => (l !== d.fromLevel && trophyFull[l] ? perRow : count));
+  const current = findPlace(d.levels, d.slot);
+  const place = dropPlace(x - origin.left, y - origin.top, d.geometry, others, movable, perRow, current);
+  if (place.level === current.level && place.index === current.index) return d.levels;
+  return moveTo(d.levels, d.slot, place);
 }
 
 /** `angle` is the carried tilt in degrees; leave it out for the slab seated in its slot. */
@@ -420,7 +440,7 @@ function stepSwing(d: Drag, now: number): boolean {
 function startDrag(event: PointerEvent, slot: HTMLElement) {
   if (event.button !== 0 || drag) return;
   const box = slot.firstElementChild!.getBoundingClientRect();
-  const order = trophySlots();
+  const levels = trophyLevels();
   drag = {
     slot,
     pointerId: event.pointerId,
@@ -429,22 +449,45 @@ function startDrag(event: PointerEvent, slot: HTMLElement) {
     offsetX: event.clientX - box.left,
     offsetY: event.clientY - box.top,
     ghost: null,
-    initial: order,
-    order,
-    places: order.map((s) => ({ x: s.offsetLeft + s.offsetWidth / 2, y: s.offsetTop + s.offsetHeight / 2 })),
+    initial: levels,
+    levels,
+    geometry: measureTrophyRows(slot),
+    fromLevel: findPlace(levels, slot).level,
     pointerX: event.clientX,
     pointerY: event.clientY,
     frame: 0,
     swing: { angle: 0, rate: 0, speed: 0, lastX: event.clientX, lastTime: performance.now() },
+    share: null,
   };
   shelvesEl.setPointerCapture(event.pointerId);
+}
+
+/** Picks the dragged slab up: a copy of it follows the pointer, from (`x`, `y`). */
+function liftSlab(d: Drag, x: number, y: number) {
+  hideTooltip();
+  resetTilt();
+  const ghost = d.slot.firstElementChild!.cloneNode(true) as HTMLElement;
+  ghost.classList.remove("new");
+  ghost.classList.add("drag-ghost");
+  ghost.style.transformOrigin = `${d.offsetX}px ${d.offsetY}px`; // Swings from where it is held.
+  ghost.style.transform = ghostTransform(x - d.offsetX, y - d.offsetY, CARRY_TILT + d.swing.angle);
+  document.body.append(ghost);
+  d.swing.lastX = x;
+  d.swing.lastTime = performance.now();
+  d.ghost = ghost;
+  d.share = prepareShare(d.slot, trophyOf.get(d.slot)!);
+  d.share.catch((err) => console.error("cannot prepare the achievement image:", err));
+  d.slot.classList.add("drag-source");
+  shelvesEl.classList.add("dragging");
+  reportHitRect();
 }
 
 /** Glides the ghost into the slot's place, then shows the slot again. */
 function settleGhost(ghost: HTMLElement, slot: HTMLElement) {
   const finish = () => {
     ghost.remove();
-    slot.classList.remove("drag-source");
+    // The slab may have been dragged out and brought back, and be carried again by now.
+    if (drag?.slot !== slot) slot.classList.remove("drag-source");
   };
   if (reducedMotion() || !slot.isConnected) return finish();
   const { left, top } = placeOf(slot);
@@ -457,8 +500,195 @@ function settleGhost(ghost: HTMLElement, slot: HTMLElement) {
     .finished.then(finish, finish);
 }
 
-/** Ends the drag; saves the new order when `save` and it changed, otherwise puts it back. */
-function endDrag(save: boolean) {
+/*
+ * Dragging a trophy off the shelf turns it into an image file the OS carries on, so it can be
+ * dropped into a chat app such as Discord, or anywhere else that takes image files. The image
+ * is the slab standing on its rail beside its certificate. It is prepared when the trophy is
+ * first picked up (see `prepareShare`), so it is usually ready by the time the pointer leaves the
+ * shelf, and kept for later drags.
+ */
+/** How far past the shelf's edge (px) the pointer goes before the trophy is dragged out. */
+const DRAG_OUT_MARGIN = 16;
+
+interface ShareImages {
+  /** The shared image: a PNG, base64. */
+  image: string;
+  /** What follows the cursor: RGBA pixels, base64, `previewWidth` wide. */
+  preview: string;
+  previewWidth: number;
+  /** Device pixels per CSS pixel in the preview. */
+  previewScale: number;
+}
+
+/** Room around the slab in the preview, in CSS px; matches `.share-preview` in shelf.css. */
+const PREVIEW_PAD = { x: 8, y: 4 };
+
+function shareCard(slab: HTMLElement, item: ShelfItem): HTMLElement {
+  const stand = el("div", "share-stand");
+  const seat = el("div", "share-slab");
+  seat.append(slab);
+  stand.append(seat, el("div", "rail share-rail"), el("div", "share-mark", "Achievement Shelf"));
+  const { children, hasBanner } = certificate(item);
+  const cert = el("div", hasBanner ? "tooltip share-cert has-banner" : "tooltip share-cert");
+  cert.append(...children);
+  const card = el("div", "share-card");
+  card.append(stand, cert);
+  return card;
+}
+
+/*
+ * Each achievement's images are drawn and handed to the backend once, then kept, so picking a
+ * slab up again and dragging it out does neither again. They are drawn again when anything
+ * drawn in them changes: the achievement, the colour scheme or the device pixel ratio (which
+ * includes the shelf's zoom).
+ */
+interface PreparedShare {
+  /** What the backend keeps the images under (`prepare_share`). */
+  id: string;
+  /** Device pixels per CSS pixel in the preview. */
+  previewScale: number;
+}
+
+/** No more than this many achievements' images are kept; the oldest go first. */
+const MAX_SHARES = 64;
+/** By `shareKey`, least recently used first. */
+const shares = new Map<string, Promise<PreparedShare>>();
+let nextShareId = 1;
+
+/** Lets go of the images under `keys`, here and in the backend, which deletes their files. */
+function forgetShares(keys: string[]) {
+  for (const key of keys) {
+    const prepared = shares.get(key);
+    if (!prepared) continue;
+    shares.delete(key);
+    prepared.then(
+      ({ id }) => invoke("forget_shares", { ids: [id] }).catch(console.error),
+      () => {},
+    );
+  }
+}
+
+/**
+ * Lets go of the images of trophies no longer on the shelf, and of ones drawn differently now.
+ * Run after each shelf is drawn.
+ */
+function pruneShares() {
+  const current = new Set(
+    trophyLevels()
+      .flat()
+      .map((slot) => shareKey(trophyOf.get(slot)!)),
+  );
+  forgetShares([...shares.keys()].filter((key) => !current.has(key)));
+}
+const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
+
+function shareKey(item: ShelfItem): string {
+  const { source, gameId, apiName, title, description, rarity, platinum, unlockedAt, gameName, iconUrl } = item;
+  const drawn = [source, gameId, apiName, title, description, rarity, platinum, unlockedAt, gameName, iconUrl];
+  return JSON.stringify([...drawn, window.devicePixelRatio, darkScheme.matches]);
+}
+
+/** The achievement's images, drawn and prepared now, or kept from before. */
+function prepareShare(slot: HTMLElement, item: ShelfItem): Promise<PreparedShare> {
+  const key = shareKey(item);
+  const kept = shares.get(key);
+  if (kept) {
+    // Most recently used last, so the oldest is first to go.
+    shares.delete(key);
+    shares.set(key, kept);
+    return kept;
+  }
+  const id = String(nextShareId++);
+  const prepared = renderShare(slot, item).then(async ({ image, preview, previewWidth, previewScale }) => {
+    await invoke("prepare_share", { id, title: item.title || item.apiName, image, preview, previewWidth });
+    return { id, previewScale };
+  });
+  prepared.catch(() => {
+    if (shares.get(key) === prepared) shares.delete(key);
+  });
+  shares.set(key, prepared);
+  if (shares.size > MAX_SHARES) forgetShares([...shares.keys()].slice(0, shares.size - MAX_SHARES));
+  return prepared;
+}
+
+async function renderShare(slot: HTMLElement, item: ShelfItem): Promise<ShareImages> {
+  const slab = slot.firstElementChild!.cloneNode(true) as HTMLElement;
+  slab.classList.remove("new");
+  slab.removeAttribute("style");
+  const preview = el("div", "share-preview");
+  preview.append(slab.cloneNode(true));
+  // The preview follows the cursor at the size of the carried slab on screen.
+  const previewScale = window.devicePixelRatio * 1.05;
+  const [card, previewCanvas] = await Promise.all([
+    renderCanvas(shareCard(slab, item), Math.max(2, window.devicePixelRatio)),
+    renderCanvas(preview, previewScale),
+  ]);
+  return {
+    image: pngBase64(card),
+    preview: rgbaBase64(previewCanvas),
+    previewWidth: previewCanvas.width,
+    previewScale,
+  };
+}
+
+type TrophyKey = Pick<ShelfItem, "source" | "gameId" | "apiName">;
+const sameTrophy = (a: TrophyKey, b: TrophyKey) =>
+  a.source === b.source && a.gameId === b.gameId && a.apiName === b.apiName;
+
+/** The trophy last dragged out, and where it was held, in case it is brought back. */
+let draggedOut: { trophy: TrophyKey; offsetX: number; offsetY: number } | null = null;
+
+/** Hands the carried trophy to the OS as an image file, leaving its slot faded meanwhile. */
+async function dragOut(d: Drag) {
+  const item = trophyOf.get(d.slot)!;
+  const prepared = d.share!;
+  draggedOut = { trophy: item, offsetX: d.offsetX, offsetY: d.offsetY };
+  endDrag(false, true);
+  try {
+    const { id, previewScale } = await prepared;
+    // Held by the point the slab was picked up by, as the carried slab was.
+    const hotspot = [
+      Math.round((d.offsetX + PREVIEW_PAD.x) * previewScale),
+      Math.round((d.offsetY + PREVIEW_PAD.y) * previewScale),
+    ];
+    // The slab carries on swinging off the shelf, from where it had got to.
+    const { angle, rate, speed } = d.swing;
+    // Brought back over the shelf, the trophy comes back to be placed (`share-drag-returned`).
+    const { left, top, width, height } = shelvesEl.getBoundingClientRect();
+    await invoke("share_drag", {
+      shelf: { x: left, y: top, width, height },
+      id,
+      hotspot,
+      swing: reducedMotion() ? null : { angle, rate, speed },
+      pixelRatio: window.devicePixelRatio,
+    });
+  } catch (err) {
+    console.error("cannot drag out the achievement:", err);
+    endDragOut();
+  }
+}
+
+/** The drag out ended away from the shelf: dropped, cancelled or failed. Its slot shows again. */
+function endDragOut() {
+  draggedOut = null;
+  for (const slot of shelvesEl.querySelectorAll<HTMLElement>(".slot.drag-source")) {
+    if (slot !== drag?.slot) slot.classList.remove("drag-source");
+  }
+}
+listen("share-drag-ended", endDragOut);
+
+function outsideShelf(x: number, y: number) {
+  const r = shelvesEl.getBoundingClientRect();
+  const m = DRAG_OUT_MARGIN;
+  return x < r.left - m || x > r.right + m || y < r.top - m || y > r.bottom + m;
+}
+
+/**
+ * Ends the drag; saves the new order when `save` and it changed, otherwise puts it back. When
+ * the trophy is dragged `out`, the OS carries the slab on, so its copy here goes and its slot
+ * stays faded until that drag ends (`share-drag-ended`).
+ */
+function endDrag(save: boolean, out = false) {
   const d = drag;
   if (!d) return;
   drag = null;
@@ -469,16 +699,22 @@ function endDrag(save: boolean) {
   if (!d.ghost && save) togglePin(d.slot);
   if (d.ghost) {
     shelvesEl.classList.remove("dragging");
-    const changed = d.order.some((slot, i) => slot !== d.initial[i]);
+    reportHitRect();
+    const changed = d.levels.some(
+      (level, l) => level.length !== d.initial[l].length || level.some((slot, i) => slot !== d.initial[l][i]),
+    );
     if (changed && !save) layoutTrophies(d.initial);
-    settleGhost(d.ghost, d.slot);
+    if (out) d.ghost.remove();
+    else settleGhost(d.ghost, d.slot);
     if (changed && save) {
       saving = true;
-      const order = d.order.map((slot) => {
-        const { source, gameId, apiName } = trophyOf.get(slot)!;
-        return { source, gameId, apiName };
-      });
-      invoke("reorder_trophies", { order }).catch((err) => {
+      const levels = d.levels.map((level) =>
+        level.map((slot) => {
+          const { source, gameId, apiName } = trophyOf.get(slot)!;
+          return { source, gameId, apiName };
+        }),
+      );
+      invoke("move_trophies", { levels }).catch((err) => {
         console.error(err);
         void refresh();
       });
@@ -499,40 +735,84 @@ function drawDrag(now: number) {
   // Keeps drawing while the slab swings, after the pointer has stopped too.
   if (!reducedMotion() && stepSwing(d, now)) d.frame = requestAnimationFrame(drawDrag);
   d.ghost.style.transform = ghostTransform(d.pointerX - d.offsetX, d.pointerY - d.offsetY, CARRY_TILT + d.swing.angle);
-  const order = dropOrder(d, d.pointerX, d.pointerY);
-  if (order !== d.order) {
-    d.order = order;
-    layoutTrophies(order);
+  const levels = dropLevels(d, d.pointerX, d.pointerY);
+  if (levels !== d.levels) {
+    d.levels = levels;
+    layoutTrophies(levels);
   }
+}
+
+/*
+ * A trophy dragged out and brought back over the shelf with the button still down comes back
+ * to the shelf to be placed, carried on from where it was and swinging as it was. The OS drag
+ * gave no pointer events, so the drag takes on the mouse's pointer at its first event.
+ */
+const MOUSE_UNKNOWN = -1;
+
+listen<{ x: number; y: number; swing: { angle: number; rate: number; speed: number } }>(
+  "share-drag-returned",
+  ({ payload: { x, y, swing } }) => {
+    const out = draggedOut;
+    draggedOut = null;
+    if (!out || drag) return;
+    const slot = trophyLevels()
+      .flat()
+      .find((s) => sameTrophy(trophyOf.get(s)!, out.trophy));
+    if (!slot) return;
+    const levels = trophyLevels();
+    const d: Drag = {
+      slot,
+      pointerId: MOUSE_UNKNOWN,
+      startX: x,
+      startY: y,
+      offsetX: out.offsetX,
+      offsetY: out.offsetY,
+      ghost: null,
+      initial: levels,
+      levels,
+      geometry: measureTrophyRows(slot),
+      fromLevel: findPlace(levels, slot).level,
+      pointerX: x,
+      pointerY: y,
+      frame: 0,
+      swing: { ...swing, lastX: x, lastTime: performance.now() },
+      share: null,
+    };
+    drag = d;
+    liftSlab(d, x, y);
+    d.frame = requestAnimationFrame(drawDrag);
+  },
+);
+
+/** Whether `event` is the dragging pointer's, taking on the mouse for a drag brought back. */
+function ownsPointer(d: Drag, event: PointerEvent) {
+  if (d.pointerId === MOUSE_UNKNOWN && event.pointerType === "mouse") {
+    d.pointerId = event.pointerId;
+    try {
+      shelvesEl.setPointerCapture(event.pointerId);
+    } catch {
+      // Not pressed as far as the page knows; the drag carries on while the pointer is over it.
+    }
+  }
+  return event.pointerId === d.pointerId;
 }
 
 shelvesEl.addEventListener("pointermove", (event) => {
   const d = drag;
-  if (!d || event.pointerId !== d.pointerId) return;
+  if (!d || !ownsPointer(d, event)) return;
   // The button came up while the window was ignoring the mouse (outside the shelf).
   if (event.buttons === 0) return endDrag(true);
   if (!d.ghost) {
     if (Math.hypot(event.clientX - d.startX, event.clientY - d.startY) < DRAG_THRESHOLD) return;
-    hideTooltip();
-    resetTilt();
-    const ghost = d.slot.firstElementChild!.cloneNode(true) as HTMLElement;
-    ghost.classList.remove("new");
-    ghost.classList.add("drag-ghost");
-    ghost.style.transformOrigin = `${d.offsetX}px ${d.offsetY}px`; // Swings from where it is held.
-    ghost.style.transform = ghostTransform(event.clientX - d.offsetX, event.clientY - d.offsetY, CARRY_TILT);
-    document.body.append(ghost);
-    d.swing.lastX = event.clientX;
-    d.swing.lastTime = performance.now();
-    d.ghost = ghost;
-    d.slot.classList.add("drag-source");
-    shelvesEl.classList.add("dragging");
+    liftSlab(d, event.clientX, event.clientY);
   }
+  if (outsideShelf(event.clientX, event.clientY)) return void dragOut(d);
   d.pointerX = event.clientX;
   d.pointerY = event.clientY;
   if (!d.frame) d.frame = requestAnimationFrame(drawDrag);
 });
 shelvesEl.addEventListener("pointerup", (event) => {
-  if (drag && event.pointerId === drag.pointerId) endDrag(true);
+  if (drag && ownsPointer(drag, event)) endDrag(true);
 });
 shelvesEl.addEventListener("pointercancel", () => endDrag(false));
 shelvesEl.addEventListener("lostpointercapture", () => endDrag(false));
@@ -593,17 +873,22 @@ type RowContent = HTMLElement[] | string;
 interface RowSpec {
   content: RowContent;
   trophy: boolean;
+  /** The nameplate on the rail of a section's first row. */
+  label?: string;
 }
 
 const kindOf = (content: RowContent) => (typeof content === "string" ? `m:${content}` : "items");
-const rowKey = (trophy: boolean, content: RowContent) => `${trophy ? "t" : "r"}|${kindOf(content)}`;
+const rowKey = ({ trophy, content, label }: RowSpec) => `${trophy ? "t" : "r"}|${label ?? ""}|${kindOf(content)}`;
 
-function renderRow(content: RowContent, trophy: boolean): HTMLElement {
+function renderRow(spec: RowSpec): HTMLElement {
+  const { content, trophy, label } = spec;
   const row = el("div", trophy ? "row trophy" : "row");
   const items = el("div", typeof content === "string" ? "row-items message" : "row-items");
   if (typeof content === "string") items.append(el("span", "placard", content));
-  row.dataset.key = rowKey(trophy, content);
-  row.append(items, el("div", "rail"));
+  row.dataset.key = rowKey(spec);
+  const rail = el("div", "rail");
+  if (label) rail.append(el("span", "rail-label", label));
+  row.append(items, rail);
   return row;
 }
 
@@ -621,10 +906,11 @@ function syncRows(rows: RowSpec[]) {
     pool.set(key, [...(pool.get(key) ?? []), row]);
   }
   const entering = new Set<HTMLElement>();
-  const next = rows.map(({ content, trophy }) => {
-    let row = pool.get(rowKey(trophy, content))?.shift();
+  const next = rows.map((spec) => {
+    const { content } = spec;
+    let row = pool.get(rowKey(spec))?.shift();
     if (!row) {
-      row = renderRow(content, trophy);
+      row = renderRow(spec);
       entering.add(row);
     }
     if (typeof content !== "string") setChildren(row.querySelector(".row-items")!, content);
@@ -655,10 +941,14 @@ function renderMessage(text: string) {
 
 /**
  * Tells the backend where the shelf is, in physical pixels, so clicks elsewhere pass through
- * to the desktop. The device pixel ratio includes the shelf's zoom.
+ * to the desktop. The device pixel ratio includes the shelf's zoom. While a slab is carried the
+ * whole window takes the mouse: the pointer has to get `DRAG_OUT_MARGIN` past the shelf to drag
+ * it out, and a window letting the mouse through there would stop the drag's pointer events.
  */
 function reportHitRect() {
-  const r = shelvesEl.getBoundingClientRect();
+  const r = drag?.ghost
+    ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+    : shelvesEl.getBoundingClientRect();
   const px = window.devicePixelRatio;
   invoke("set_hit_rect", { rect: { x: r.left * px, y: r.top * px, width: r.width * px, height: r.height * px } }).catch(
     console.error,
@@ -676,21 +966,24 @@ let oldestShown = -Infinity;
 function renderShelf(shelf: Shelf) {
   banners = shelf.banners;
   perRow = shelf.perRow;
+  trophyFull = shelf.trophyFull;
   document.documentElement.style.setProperty("--per-row", String(perRow));
   const next = new Map<string, Rendered>();
   const rows: RowSpec[] = [];
+  const noTrophies = shelf.trophies.every((level) => level.length === 0);
   for (let r = 0; r < shelf.trophyRows; r++) {
-    const slice = shelf.trophies.slice(r * shelf.perRow, (r + 1) * shelf.perRow);
+    const level = (shelf.trophies[r] ?? []).slice(0, shelf.perRow);
     rows.push({
       trophy: true,
+      label: r === 0 ? "Trophies" : undefined,
       content:
-        r === 0 && shelf.trophies.length === 0
+        r === 0 && noTrophies
           ? "Pick your trophies from the tray menu"
-          : slice.map((item) => slotFor(next, `t:${keyOf(item)}`, item, () => renderTrophy(item))),
+          : level.map((item) => slotFor(next, `t:${keyOf(item)}`, item, () => renderTrophy(item))),
     });
   }
   if (shelf.rows > 0 && shelf.items.length === 0) {
-    rows.push({ trophy: false, content: "No unlocked achievements found yet" });
+    rows.push({ trophy: false, label: "Recent", content: "No unlocked achievements found yet" });
   } else {
     const isNew = (item: ShelfItem) =>
       knownKeys !== null && !knownKeys.has(keyOf(item)) && item.unlockedAt >= oldestShown;
@@ -698,6 +991,7 @@ function renderShelf(shelf: Shelf) {
       const slice = shelf.items.slice(r * shelf.perRow, (r + 1) * shelf.perRow);
       rows.push({
         trophy: false,
+        label: r === 0 ? "Recent" : undefined,
         content: slice.map((item) => slotFor(next, `r:${keyOf(item)}`, item, () => renderItem(item, isNew(item)))),
       });
     }
@@ -705,6 +999,7 @@ function renderShelf(shelf: Shelf) {
   syncRows(rows);
   rendered = next;
   lastShelf = shelf;
+  pruneShares();
 
   // Keep the tooltip while its slot is still on the shelf; rows may have moved, so re-place it.
   const anchor = tooltipAnchor;

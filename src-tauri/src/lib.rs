@@ -5,6 +5,7 @@ pub mod steam;
 mod icons;
 mod rarity;
 mod settings;
+mod share;
 mod watch;
 
 use std::collections::HashMap;
@@ -72,6 +73,8 @@ struct AppState {
     rarity: RarityCache,
     /// Shelf area in the window, in physical pixels. Outside it, clicks pass through.
     hit_rect: Arc<Mutex<Option<HitRect>>>,
+    /// Achievement images ready to drag out, by the id the shelf gave them (`prepare_share`).
+    shares: Mutex<HashMap<String, PreparedShare>>,
 }
 
 impl AppState {
@@ -97,7 +100,11 @@ struct Shelf {
     /// Rows of the trophy shelf (at least one, possibly empty).
     trophy_rows: usize,
     per_row: usize,
-    trophies: Vec<ShelfItem>,
+    /// The trophies on each trophy level, top first. A level may be empty.
+    trophies: Vec<Vec<ShelfItem>>,
+    /// Whether each trophy level has no room for another trophy. Trophies no longer found on
+    /// disk are not shown but still take room.
+    trophy_full: Vec<bool>,
     items: Vec<ShelfItem>,
     /// Banner `data:` URLs keyed by [`game_key`], once per game; games without one are left out.
     banners: HashMap<String, String>,
@@ -117,10 +124,14 @@ struct PickerItem {
 struct PickerData {
     /// Launchers found on this PC, so the picker can tell "not installed" from "nothing unlocked".
     launchers: Vec<Source>,
-    max_trophies: usize,
     /// Trophies on each rail of the shelf.
     per_row: usize,
-    trophies: Vec<TrophyKey>,
+    /// Trophy levels on the shelf, and whether the picker can add or remove one.
+    trophy_rows: usize,
+    can_add_trophy_row: bool,
+    can_remove_trophy_row: bool,
+    /// Every saved trophy level, top first, including any past `trophy_rows`.
+    trophies: Vec<Vec<TrophyKey>>,
     items: Vec<PickerItem>,
 }
 
@@ -254,26 +265,29 @@ async fn banners(
 
 #[tauri::command]
 async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
-    let (rows, trophy_rows, per_row, trophy_capacity, recent_capacity, trophy_keys) = {
+    let (rows, trophy_rows, per_row, recent_capacity, trophy_levels, trophy_full) = {
         let settings = state.settings.lock().unwrap();
         (
             settings.rows,
             settings.trophy_rows,
             settings.per_row,
-            settings.trophy_capacity(),
             settings.recent_capacity(),
-            settings.trophies.clone(),
+            settings.shown_trophy_levels(),
+            settings.full_trophy_levels(),
         )
     };
 
     let Unlocked { achievements: mut recent, names, gog_banners, .. } = load_unlocked().await?;
-    // Trophies keep the order the user chose. Ones no longer found on disk are skipped,
-    // and ones past what the trophy rows hold are not shown.
-    let mut trophies: Vec<Achievement> = trophy_keys
+    // Each level keeps the trophies and order the user chose. Ones no longer found on disk are
+    // skipped, and ones past what a level holds are not shown.
+    let found: Vec<Vec<Achievement>> = trophy_levels
         .iter()
-        .filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned())
-        .take(trophy_capacity)
+        .map(|level| {
+            level.iter().filter_map(|key| recent.iter().find(|a| key.matches(a)).cloned()).take(per_row).collect()
+        })
         .collect();
+    let level_sizes: Vec<usize> = found.iter().map(Vec::len).collect();
+    let mut trophies: Vec<Achievement> = found.into_iter().flatten().collect();
     recent.truncate(recent_capacity);
 
     let shown: Vec<&Achievement> = recent.iter().chain(&trophies).collect();
@@ -281,11 +295,14 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
     let banners = banners(&state, &gog_banners, &shown).await;
     state.rarity.fill(&state.client, &mut recent).await;
     state.rarity.fill(&state.client, &mut trophies).await;
+    let mut trophies = shelf_items(&state, trophies).await.into_iter();
+    let trophies = level_sizes.into_iter().map(|size| trophies.by_ref().take(size).collect()).collect();
     Ok(Shelf {
         rows,
         trophy_rows,
         per_row,
-        trophies: shelf_items(&state, trophies).await,
+        trophies,
+        trophy_full,
         items: shelf_items(&state, recent).await,
         banners,
     })
@@ -301,11 +318,16 @@ async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> 
         .into_iter()
         .map(|achievement| PickerItem { game_name: game_name(&state, &achievement), achievement })
         .collect();
-    let (max_trophies, per_row, trophies) = {
-        let settings = state.settings.lock().unwrap();
-        (settings.trophy_capacity(), settings.per_row, settings.trophies.clone())
-    };
-    Ok(PickerData { launchers, max_trophies, per_row, trophies, items })
+    let settings = state.settings.lock().unwrap().clone();
+    Ok(PickerData {
+        launchers,
+        per_row: settings.per_row,
+        trophy_rows: settings.trophy_rows,
+        can_add_trophy_row: settings.can_add_row(),
+        can_remove_trophy_row: settings.can_remove_trophy_row(),
+        trophies: settings.trophy_levels,
+        items,
+    })
 }
 
 #[tauri::command]
@@ -318,56 +340,36 @@ async fn get_icon(
     Ok(icons::icon_data_url(&state.client, &state.cache_dir, source, &game_id, &icon).await)
 }
 
-/// Adds or removes a trophy and returns the new list. Fails when the shelf is already full.
+/// Adds or removes a trophy and returns every trophy level. A trophy is added to the first
+/// level with room; fails when every level is full.
 #[tauri::command]
 fn set_trophy(
     app: AppHandle,
     state: State<'_, AppState>,
     key: TrophyKey,
     trophy: bool,
-) -> Result<Vec<TrophyKey>, String> {
+) -> Result<Vec<Vec<TrophyKey>>, String> {
     let trophies = {
         let mut settings = state.settings.lock().unwrap();
-        let present = settings.trophies.contains(&key);
-        if trophy && !present {
-            let capacity = settings.trophy_capacity();
-            if settings.trophies.len() >= capacity {
-                return Err(format!(
-                    "The trophy shelf holds {capacity} achievements. Remove one, or add a trophy level from the tray menu."
-                ));
-            }
-            settings.trophies.push(key);
-        } else if !trophy && present {
-            settings.trophies.retain(|k| *k != key);
+        if trophy {
+            settings.add_trophy(key)?;
+        } else {
+            settings.remove_trophy(&key);
         }
         settings.save(&state.settings_path);
-        settings.trophies.clone()
+        settings.trophy_levels.clone()
     };
     let _ = app.emit(watch::UPDATED_EVENT, ());
     Ok(trophies)
 }
 
-/// Reorders the trophies shown on the shelf. `order` must hold the same keys as some of
-/// the saved trophies; they are put back in the positions those keys held, so trophies
-/// not shown (missing from disk, or past the shelf's capacity) keep their places.
+/// Rearranges the trophies on the levels shown: `levels` lists, top first, the trophies the
+/// shelf or picker shows on each level (see [`settings::Settings::move_trophies`]).
 #[tauri::command]
-fn reorder_trophies(app: AppHandle, state: State<'_, AppState>, order: Vec<TrophyKey>) -> Result<(), String> {
+fn move_trophies(app: AppHandle, state: State<'_, AppState>, levels: Vec<Vec<TrophyKey>>) -> Result<(), String> {
     {
         let mut settings = state.settings.lock().unwrap();
-        let slots: Vec<usize> = settings
-            .trophies
-            .iter()
-            .enumerate()
-            .filter(|(_, key)| order.contains(key))
-            .map(|(i, _)| i)
-            .collect();
-        let distinct = order.iter().enumerate().all(|(i, key)| !order[..i].contains(key));
-        if slots.len() != order.len() || !distinct {
-            return Err("The trophy shelf changed; try again.".into());
-        }
-        for (slot, key) in slots.into_iter().zip(order) {
-            settings.trophies[slot] = key;
-        }
+        settings.move_trophies(levels)?;
         settings.save(&state.settings_path);
     }
     let _ = app.emit(watch::UPDATED_EVENT, ());
@@ -378,7 +380,7 @@ fn reorder_trophies(app: AppHandle, state: State<'_, AppState>, order: Vec<Troph
 fn clear_trophies(app: AppHandle, state: State<'_, AppState>) {
     {
         let mut settings = state.settings.lock().unwrap();
-        settings.trophies.clear();
+        settings.clear_trophies();
         settings.save(&state.settings_path);
     }
     let _ = app.emit(watch::UPDATED_EVENT, ());
@@ -387,6 +389,191 @@ fn clear_trophies(app: AppHandle, state: State<'_, AppState>) {
 #[tauri::command]
 fn set_hit_rect(state: State<'_, AppState>, rect: HitRect) {
     *state.hit_rect.lock().unwrap() = Some(rect);
+}
+
+/// Shared images are kept this long, so a chat app still uploading one can read it.
+const SHARE_KEEP: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// A file name for a shared image of the achievement `title`, safe on every platform.
+fn share_file_name(title: &str) -> String {
+    let name: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { ' ' })
+        .collect();
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    let name: String = name.chars().take(60).collect();
+    if name.is_empty() { "Achievement.png".into() } else { format!("{name}.png") }
+}
+
+/// An achievement's images, ready to drag out (`prepare_share`).
+struct PreparedShare {
+    /// The PNG, saved at `path`; kept to save it again if it has been cleared out since.
+    png: Vec<u8>,
+    path: PathBuf,
+    /// What follows the cursor: straight RGBA rows, top first.
+    preview: Vec<u8>,
+    preview_width: u32,
+    preview_height: u32,
+    /// Whether it has been dragged out, so something may still be reading the file.
+    shared: bool,
+}
+
+/// Where shared images are saved, each in a folder of its own.
+fn share_dir() -> PathBuf {
+    std::env::temp_dir().join("achievement-shelf-share")
+}
+
+/// Clears out images shared long enough ago that nothing is still reading them.
+fn clean_old_shares() {
+    let Ok(entries) = std::fs::read_dir(share_dir()) else { return };
+    for entry in entries.flatten() {
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        if old.is_some_and(|age| age > SHARE_KEEP) {
+            let path = entry.path();
+            let _ = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+        }
+    }
+}
+
+/// Lets go of the images prepared as `ids`, deleting their files unless they were dragged out:
+/// those are left for `clean_old_shares`, as an app they were dropped into may still read them.
+#[tauri::command]
+fn forget_shares(state: State<'_, AppState>, ids: Vec<String>) {
+    let mut shares = state.shares.lock().unwrap();
+    for id in ids {
+        let Some(share) = shares.remove(&id) else { continue };
+        if !share.shared {
+            if let Some(folder) = share.path.parent() {
+                let _ = std::fs::remove_dir_all(folder);
+            }
+        }
+    }
+}
+
+/// The shelf keeps no more prepared images than this; it names the ones it lets go.
+const MAX_SHARES: usize = 256;
+
+/// Readies an achievement to be dragged out, ahead of the drag, so the drag itself only names
+/// it: decodes `image` (a PNG of its slab and certificate, base64) and saves it to a temporary
+/// file, and keeps `preview` (RGBA pixels, base64, `preview_width` wide) to show under the
+/// cursor.
+#[tauri::command]
+async fn prepare_share(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+    image: String,
+    preview: String,
+    preview_width: u32,
+) -> Result<(), String> {
+    use base64::Engine;
+    if id.is_empty() || id.len() > 32 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("the share id must be a short run of letters and digits".into());
+    }
+    let decode = |data: &str| base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string());
+    let png = decode(&image)?;
+    let rgba = decode(&preview)?;
+    let row = preview_width as usize * 4;
+    if row == 0 || rgba.len() % row != 0 {
+        return Err("the drag preview is not whole rows of pixels".into());
+    }
+    let preview_height = (rgba.len() / row) as u32;
+
+    // Also run at startup; here too, for a shelf left running for days.
+    clean_old_shares();
+    // A folder of its own, so achievements with the same title don't share a file. The process
+    // id keeps ids reused by a later run from writing over a file still being read.
+    let path = share_dir().join(format!("{}-{id}", std::process::id())).join(share_file_name(&title));
+    write_share(&path, &png)?;
+
+    let mut shares = state.shares.lock().unwrap();
+    if shares.len() >= MAX_SHARES && !shares.contains_key(&id) {
+        return Err("too many achievement images are kept".into());
+    }
+    shares.insert(id, PreparedShare { png, path, preview: rgba, preview_width, preview_height, shared: false });
+    Ok(())
+}
+
+fn write_share(path: &Path, png: &[u8]) -> Result<(), String> {
+    std::fs::create_dir_all(path.parent().expect("share files sit in a folder")).map_err(|e| e.to_string())?;
+    std::fs::write(path, png).map_err(|e| e.to_string())
+}
+
+/// Drags the achievement prepared as `id` out of the shelf as its image file, so it can be
+/// dropped into a chat app such as Discord. Its preview is shown under the cursor, held by the
+/// pixel at `hotspot`. Must be called while the mouse button is still down; the drag ends when
+/// it is released, or hands the slab back to the shelf when the cursor comes back over `shelf`
+/// (in the page's CSS px; `SHARE_RETURNED_EVENT`).
+#[tauri::command]
+async fn share_drag(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    id: String,
+    hotspot: (i32, i32),
+    swing: Option<share::Swing>,
+    pixel_ratio: f64,
+    shelf: HitRect,
+) -> Result<(), String> {
+    let finite = swing.is_none_or(|s| [s.angle, s.rate, s.speed].iter().all(|v| v.is_finite()));
+    if !finite || !pixel_ratio.is_finite() || pixel_ratio <= 0.0 {
+        return Err("the drag's swing is not a set of finite numbers".into());
+    }
+    let (path, preview) = {
+        let mut shares = state.shares.lock().unwrap();
+        let share = shares.get_mut(&id).ok_or("that achievement image is not prepared")?;
+        share.shared = true;
+        // Cleared out by a long-running shelf: saved again.
+        if !share.path.exists() {
+            write_share(&share.path, &share.png)?;
+        }
+        let preview = share::DragImage {
+            rgba: share.preview.clone(),
+            width: share.preview_width,
+            height: share.preview_height,
+            hotspot,
+            swing,
+            pixel_ratio,
+        };
+        (share.path.clone(), preview)
+    };
+
+    // The window stays put while dragging, so its place is read here rather than from inside
+    // the drag loop, which holds up the event loop.
+    let origin = window.inner_position().map_err(|e| e.to_string())?;
+    let over_shelf: share::OverShelf = Box::new(move |x, y| {
+        let (x, y) = ((x - origin.x) as f64 / pixel_ratio, (y - origin.y) as f64 / pixel_ratio);
+        x >= shelf.x && x <= shelf.x + shelf.width && y >= shelf.y && y <= shelf.y + shelf.height
+    });
+
+    // The OS drag loop blocks until the drop, and must run on the UI thread.
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || match share::drag_file(&path, preview, over_shelf) {
+            Ok(share::DragEnd::Returned { x, y, swing }) => {
+                let at = ((x - origin.x) as f64 / pixel_ratio, (y - origin.y) as f64 / pixel_ratio);
+                let _ = target.emit_to(target.label(), SHARE_RETURNED_EVENT, ShareReturned { x: at.0, y: at.1, swing });
+            }
+            ended => {
+                if let Err(e) = ended {
+                    eprintln!("achievement-shelf: could not drag out the achievement: {e}");
+                }
+                let _ = target.emit_to(target.label(), SHARE_ENDED_EVENT, ());
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Sent to the shelf when a slab dragged out is brought back over it with the button down.
+const SHARE_RETURNED_EVENT: &str = "share-drag-returned";
+/// Sent to the shelf when a drag out ends anywhere else: dropped, cancelled or failed.
+const SHARE_ENDED_EVENT: &str = "share-drag-ended";
+
+/// Where the cursor came back, in the shelf page's CSS px, and how the slab was swinging.
+#[derive(Clone, Serialize)]
+struct ShareReturned {
+    x: f64,
+    y: f64,
+    swing: share::Swing,
 }
 
 /// The chosen display, or the main one if none was chosen or it is not connected.
@@ -1207,6 +1394,7 @@ pub fn run() {
                 names: Mutex::new(names),
                 rarity,
                 hit_rect: hit_rect.clone(),
+                shares: Mutex::default(),
             });
             apply_theme(app.handle(), settings.theme);
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");
@@ -1219,6 +1407,8 @@ pub fn run() {
                 window.show()?;
             }
             spawn_hit_test(window, hit_rect.clone());
+            // Images shared in an earlier run, once nothing can still be reading them.
+            std::thread::spawn(clean_old_shares);
 
             migrate_old_autostart(app.handle());
             build_tray(app.handle(), &settings)?;
@@ -1234,9 +1424,12 @@ pub fn run() {
             get_unlocked,
             get_icon,
             set_trophy,
-            reorder_trophies,
+            move_trophies,
             clear_trophies,
             set_hit_rect,
+            prepare_share,
+            forget_shares,
+            share_drag,
             get_settings,
             change_shelf_rows,
             change_shelf_per_row,

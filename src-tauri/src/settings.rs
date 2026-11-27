@@ -13,8 +13,8 @@ pub const MAX_PER_ROW: usize = 10;
 pub const MAX_LEVELS: usize = 10;
 /// The trophy shelf is always shown; the recent shelf can be hidden.
 pub const MIN_TROPHY_ROWS: usize = 1;
-/// Most trophies kept in settings: every level as a trophy row of the widest kind.
-const MAX_STORED_TROPHIES: usize = MAX_LEVELS * MAX_PER_ROW;
+/// Told to the shelf or picker when the trophies it moved are not the ones saved.
+const TROPHIES_CHANGED: &str = "The trophy shelf changed; try again.";
 /// Shelf size, as a share of its normal size: at 1, a shelf of [`MAX_LEVELS`] levels reaches
 /// the top of the screen. A shelf with fewer levels can be drawn larger, up to [`MAX_SCALE`] or
 /// as large as fits its display, whichever is smaller. Until one is chosen, the shelf is sized
@@ -84,9 +84,15 @@ pub struct Settings {
     /// size: the shelf is then sized for its display.
     pub scale: Option<f64>,
     pub theme: Theme,
-    /// Achievements the user chose for the trophy shelf, in display order. Ones past the
-    /// trophy rows' capacity are kept, so removing a row and adding it back restores them.
-    pub trophies: Vec<TrophyKey>,
+    /// Achievements the user chose for the trophy shelf: one list per trophy level, top first,
+    /// each in display order. A level holds up to `per_row`; it need not be full, and the levels
+    /// below it can still hold trophies. Levels past `trophy_rows` and trophies past `per_row`
+    /// are kept, so removing a row or narrowing the shelf and changing it back restores them.
+    pub trophy_levels: Vec<Vec<TrophyKey>>,
+    /// The single list older versions saved, which filled the levels in turn. Moved into
+    /// `trophy_levels` on load.
+    #[serde(skip_serializing)]
+    trophies: Vec<TrophyKey>,
 }
 
 impl Default for Settings {
@@ -99,6 +105,7 @@ impl Default for Settings {
             display: None,
             scale: None,
             theme: Theme::default(),
+            trophy_levels: Vec::new(),
             trophies: Vec::new(),
         }
     }
@@ -114,7 +121,14 @@ impl Settings {
         if let Some(scale) = settings.scale {
             settings.set_scale(scale);
         }
-        settings.trophies.truncate(MAX_STORED_TROPHIES);
+        let legacy = std::mem::take(&mut settings.trophies);
+        if settings.trophy_levels.is_empty() {
+            settings.trophy_levels = legacy.chunks(settings.per_row).map(<[_]>::to_vec).collect();
+        }
+        settings.trophy_levels.truncate(MAX_LEVELS);
+        for level in &mut settings.trophy_levels {
+            level.truncate(MAX_PER_ROW);
+        }
         settings
     }
 
@@ -127,7 +141,7 @@ impl Settings {
     /// Puts every setting back to its default. The chosen trophies are kept: they are the
     /// user's collection rather than a setting, and the picker can clear them.
     pub fn reset(&mut self) {
-        *self = Self { trophies: std::mem::take(&mut self.trophies), ..Self::default() };
+        *self = Self { trophy_levels: std::mem::take(&mut self.trophy_levels), ..Self::default() };
     }
 
     /// Forgets the chosen shelf scale, so the shelf is sized for its display again.
@@ -145,9 +159,81 @@ impl Settings {
         self.rows + self.trophy_rows
     }
 
-    /// How many trophies the trophy rows hold.
-    pub fn trophy_capacity(&self) -> usize {
-        self.trophy_rows * self.per_row
+    /// The saved trophies of each level shown, top first; levels without any are empty.
+    pub fn shown_trophy_levels(&self) -> Vec<Vec<TrophyKey>> {
+        (0..self.trophy_rows).map(|l| self.trophy_levels.get(l).cloned().unwrap_or_default()).collect()
+    }
+
+    /// Whether each level shown has no room for another trophy.
+    pub fn full_trophy_levels(&self) -> Vec<bool> {
+        self.shown_trophy_levels().iter().map(|level| level.len() >= self.per_row).collect()
+    }
+
+    fn has_trophy(&self, key: &TrophyKey) -> bool {
+        self.trophy_levels.iter().flatten().any(|k| k == key)
+    }
+
+    /// Puts `key` at the end of the first level shown that has room. Fails when every one is full.
+    pub fn add_trophy(&mut self, key: TrophyKey) -> Result<(), String> {
+        if self.has_trophy(&key) {
+            return Ok(());
+        }
+        let Some(level) =
+            (0..self.trophy_rows).find(|&l| self.trophy_levels.get(l).map_or(0, Vec::len) < self.per_row)
+        else {
+            return Err(format!(
+                "The trophy shelf holds {} achievements. Remove one, or add a trophy level.",
+                self.trophy_rows * self.per_row
+            ));
+        };
+        if self.trophy_levels.len() <= level {
+            self.trophy_levels.resize_with(level + 1, Vec::new);
+        }
+        self.trophy_levels[level].push(key);
+        Ok(())
+    }
+
+    pub fn remove_trophy(&mut self, key: &TrophyKey) {
+        for level in &mut self.trophy_levels {
+            level.retain(|k| k != key);
+        }
+    }
+
+    pub fn clear_trophies(&mut self) {
+        self.trophy_levels.clear();
+    }
+
+    /// Rearranges the trophies on the levels shown. `levels` lists, top first, the trophies the
+    /// shelf or picker shows on each level; every one must be saved on a level shown, and each
+    /// appears once. Saved trophies left out (missing from disk, or past `per_row`) stay on their
+    /// level, after the ones listed. A level can only take more trophies while it has room.
+    pub fn move_trophies(&mut self, levels: Vec<Vec<TrophyKey>>) -> Result<(), String> {
+        if levels.len() > self.trophy_rows {
+            return Err(TROPHIES_CHANGED.into());
+        }
+        let shown = self.shown_trophy_levels();
+        let listed: Vec<&TrophyKey> = levels.iter().flatten().collect();
+        let distinct = listed.iter().enumerate().all(|(i, key)| !listed[..i].contains(key));
+        let saved = listed.iter().all(|key| shown.iter().flatten().any(|k| k == *key));
+        if !distinct || !saved {
+            return Err(TROPHIES_CHANGED.into());
+        }
+        let mut next = Vec::with_capacity(levels.len());
+        for (l, level) in levels.iter().enumerate() {
+            let kept = shown[l].iter().filter(|k| !listed.contains(k));
+            let moved: Vec<TrophyKey> = level.iter().chain(kept).cloned().collect();
+            if moved.len() > self.per_row && moved.len() > shown[l].len() {
+                return Err("That trophy level is full.".into());
+            }
+            next.push(moved);
+        }
+        if self.trophy_levels.len() < next.len() {
+            self.trophy_levels.resize_with(next.len(), Vec::new);
+        }
+        for (l, level) in next.into_iter().enumerate() {
+            self.trophy_levels[l] = level;
+        }
+        Ok(())
     }
 
     /// How many recent achievements the recent rows hold.
@@ -215,10 +301,9 @@ mod tests {
             serde_json::from_str(r#"{ "rows": 2, "onTop": true, "trophyShelf": false }"#).unwrap();
         assert_eq!(settings.rows, 2);
         assert_eq!(settings.trophy_rows, 1);
-        assert!(settings.trophies.is_empty());
+        assert!(settings.trophy_levels.is_empty());
         assert_eq!(settings.total_rows(), 3);
         assert_eq!(settings.per_row, DEFAULT_PER_ROW);
-        assert_eq!(settings.trophy_capacity(), DEFAULT_PER_ROW);
         assert_eq!(settings.theme, Theme::Dark, "older settings keep the dark theme");
     }
 
@@ -251,7 +336,7 @@ mod tests {
     fn per_row_changes_within_the_limits() {
         let mut settings = Settings { trophy_rows: 2, ..Settings::default() };
         assert!(settings.change_per_row(1));
-        assert_eq!(settings.trophy_capacity(), 2 * (DEFAULT_PER_ROW + 1));
+        assert_eq!(settings.per_row, DEFAULT_PER_ROW + 1);
         while settings.change_per_row(1) {}
         assert_eq!(settings.per_row, MAX_PER_ROW);
         while settings.change_per_row(-1) {}
@@ -304,13 +389,83 @@ mod tests {
             display: Some("DISPLAY2".into()),
             scale: Some(2.0),
             theme: Theme::Light,
-            trophies: vec![trophy.clone()],
+            trophy_levels: vec![vec![trophy.clone()]],
+            trophies: Vec::new(),
         };
         settings.reset();
         let defaults = Settings::default();
         assert_eq!((settings.rows, settings.trophy_rows, settings.per_row), (defaults.rows, defaults.trophy_rows, defaults.per_row));
         assert_eq!((settings.on_top, settings.display, settings.scale, settings.theme), (false, None, None, Theme::default()));
-        assert_eq!(settings.trophies, vec![trophy]);
+        assert_eq!(settings.trophy_levels, vec![vec![trophy]]);
+    }
+
+    fn key(name: &str) -> TrophyKey {
+        TrophyKey { source: Source::Steam, game_id: "1".into(), api_name: name.into() }
+    }
+
+    fn keys(names: &[&str]) -> Vec<TrophyKey> {
+        names.iter().map(|name| key(name)).collect()
+    }
+
+    #[test]
+    fn older_trophies_fill_the_levels_in_turn() {
+        let dir = std::env::temp_dir().join(format!("achievement-shelf-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let old = r#"{ "perRow": 3, "trophies": [
+            { "gameId": "1", "apiName": "a" }, { "gameId": "1", "apiName": "b" },
+            { "gameId": "1", "apiName": "c" }, { "gameId": "1", "apiName": "d" } ] }"#;
+        fs::write(&path, old).unwrap();
+        let settings = Settings::load(&path);
+        assert_eq!(settings.trophy_levels, vec![keys(&["a", "b", "c"]), keys(&["d"])]);
+        settings.save(&path);
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("\"trophies\""), "only the levels are saved");
+        assert_eq!(Settings::load(&path).trophy_levels, settings.trophy_levels);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn added_trophies_go_on_the_first_level_with_room() {
+        let mut settings = Settings { trophy_rows: 2, per_row: 3, ..Settings::default() };
+        settings.trophy_levels = vec![keys(&["a", "b", "c"])];
+        settings.add_trophy(key("d")).unwrap();
+        assert_eq!(settings.trophy_levels, vec![keys(&["a", "b", "c"]), keys(&["d"])]);
+        settings.remove_trophy(&key("b"));
+        settings.add_trophy(key("e")).unwrap();
+        assert_eq!(settings.trophy_levels, vec![keys(&["a", "c", "e"]), keys(&["d"])]);
+        settings.add_trophy(key("f")).unwrap();
+        settings.add_trophy(key("g")).unwrap();
+        assert!(settings.add_trophy(key("h")).is_err(), "every level is full");
+        settings.add_trophy(key("a")).unwrap();
+        assert_eq!(settings.trophy_levels.iter().flatten().count(), 6, "a trophy is only kept once");
+    }
+
+    #[test]
+    fn trophies_move_to_any_level_with_room() {
+        let mut settings = Settings { trophy_rows: 3, per_row: 3, ..Settings::default() };
+        settings.trophy_levels = vec![keys(&["a", "b"])];
+        // A level need not be full for the one below it to hold trophies.
+        settings.move_trophies(vec![keys(&["a"]), vec![], keys(&["b"])]).unwrap();
+        assert_eq!(settings.trophy_levels, vec![keys(&["a"]), vec![], keys(&["b"])]);
+        settings.add_trophy(key("c")).unwrap();
+        assert_eq!(settings.trophy_levels[0], keys(&["a", "c"]));
+
+        settings.trophy_levels[1] = keys(&["x", "y", "z"]);
+        let crowded = vec![keys(&["a"]), keys(&["x", "y", "z", "c"]), keys(&["b"])];
+        assert!(settings.move_trophies(crowded).is_err(), "level 2 is full");
+        assert!(settings.move_trophies(vec![keys(&["a", "a"])]).is_err(), "a trophy listed twice");
+        assert!(settings.move_trophies(vec![keys(&["q"])]).is_err(), "a trophy not on the shelf");
+        assert!(settings.move_trophies(vec![vec![], vec![], vec![], vec![]]).is_err(), "more levels than shown");
+    }
+
+    #[test]
+    fn trophies_left_out_of_a_move_stay_on_their_level() {
+        let mut settings = Settings { trophy_rows: 2, per_row: 3, ..Settings::default() };
+        // "gone" is no longer found on disk, so the shelf does not list it.
+        settings.trophy_levels = vec![keys(&["a", "gone", "b"]), keys(&["c"])];
+        settings.move_trophies(vec![keys(&["b"]), keys(&["a", "c"])]).unwrap();
+        assert_eq!(settings.trophy_levels, vec![keys(&["b", "gone"]), keys(&["a", "c"])]);
     }
 
     #[test]
