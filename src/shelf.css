@@ -430,8 +430,9 @@ body {
   color: var(--ink);
 }
 
-/* Legendary slabs, and the platinum of each completed game, catch the light: one glare sweep across the acrylic when lifted, and
-   when a new one lands. Nothing loops, since the shelf is on screen all day. */
+/* Legendary slabs, and the platinum of each completed game, catch the light: one glare sweep
+   across the acrylic when lifted (started from shelf.ts, see `sweepGlare`), and when a new one
+   lands. Nothing loops, since the shelf is on screen all day. */
 .slab.tier-legendary::before,
 .slab.platinum::before {
   content: "";
@@ -444,11 +445,6 @@ body {
   background: linear-gradient(100deg, transparent, rgba(255, 250, 230, 0.6), transparent);
   transform: translateX(-180%) skewX(-16deg);
   pointer-events: none;
-}
-
-.slab.tier-legendary:hover::before,
-.slab.platinum:hover::before {
-  animation: glare 0.9s var(--lift);
 }
 
 .slab.tier-legendary.new::before,
