@@ -512,7 +512,7 @@ Function PageWelcome
   Call SkipIfPassive
   !insertmacro SHELF_PAGE
   !insertmacro SHELF_ART
-  !insertmacro SHELF_HEADING $ShelfTextX 30 30 "SETUP" "${PRODUCTNAME}" "Your Steam and GOG Galaxy achievements on a set of shelves in the corner of your screen."
+  !insertmacro SHELF_HEADING $ShelfTextX 30 30 "SETUP" "${PRODUCTNAME}" "Your Steam, GOG, Ubisoft and EA achievements on a set of shelves in the corner of your screen."
   !insertmacro SHELF_LABEL $ShelfTextX 98u -$ShelfTextX 10u "Version ${VERSION}" $ShelfFontStrong ${SHELF_BRASS}
   !insertmacro SHELF_LABEL $ShelfTextX 116u -$ShelfTextX 30u "Click Next to choose where to install it." $ShelfFontBody ${SHELF_TEXT}
   nsDialogs::Show
