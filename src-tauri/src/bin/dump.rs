@@ -1,11 +1,13 @@
 //! Debugging tool: prints unlocked achievements read from the local launcher files.
 //! Usage: `cargo run --bin dump [appid]` (no app ID = the 20 most recent Steam unlocks
-//! across all games), or `cargo run --bin dump -- --gog`, or `--ubisoft` for every GOG
-//! Galaxy or Ubisoft Connect unlock.
+//! across all games), or `cargo run --bin dump -- --gog`, `--ubisoft` or `--ea` for every GOG
+//! Galaxy, Ubisoft Connect or EA app unlock. `--ea` reads only the current log: its history is
+//! kept in a temporary folder, not the app's.
 
 use std::collections::HashMap;
 
 use achievement_shelf_lib::achievement::Achievement;
+use achievement_shelf_lib::ea::EaPaths;
 use achievement_shelf_lib::gog::GogPaths;
 use achievement_shelf_lib::steam::{stats, SteamPaths};
 use achievement_shelf_lib::ubisoft::UbisoftPaths;
@@ -35,6 +37,14 @@ fn main() -> Result<(), String> {
         println!("Ubisoft Connect: {}", ubisoft.spool.display());
         let list = ubisoft.load_all();
         print_all(&list, &ubisoft.names());
+        list
+    } else if arg.as_deref() == Some("--ea") {
+        let history = std::env::temp_dir().join(format!("achievement-shelf-dump-{}", std::process::id()));
+        let ea = EaPaths::locate(&history)?;
+        println!("EA app: {}", ea.logs.display());
+        let list = ea.load_all();
+        print_all(&list, &ea.names());
+        let _ = std::fs::remove_dir_all(&history);
         list
     } else if arg.as_deref() == Some("--gog") {
         let gog = GogPaths::locate()?;

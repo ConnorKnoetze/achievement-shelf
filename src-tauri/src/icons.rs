@@ -10,7 +10,7 @@ use base64::Engine;
 
 use crate::achievement::Source;
 use crate::ubisoft::{self, UbisoftPaths};
-use crate::steam;
+use crate::{ea, steam};
 
 /// Steam serves achievement icons from these hosts. Newer icons exist only on the first.
 const STEAM_CDNS: [&str; 2] = [
@@ -101,6 +101,10 @@ fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option
             let urls = vec![format!("{GOG_IMAGE_HOST}{full}"), icon.to_string()];
             Some((icons.join("gog").join(full), urls))
         }
+        Source::Ea => {
+            let file = icon.strip_prefix(ea::ICON_HOST)?;
+            is_safe_image_name(file).then(|| (icons.join("ea").join(file), vec![icon.to_string()]))
+        }
         // Read from the game's archive instead; see `ubisoft_icon`.
         Source::Ubisoft => None,
     }
@@ -158,7 +162,7 @@ pub async fn icon_data_url(
 /// Where the game's banner is cached and the URLs to try, or `None` if there is none or the
 /// values are unsafe. Steam banners come from the app id. `cover` is what the launcher's own
 /// files name: for GOG the store's `horizontalCover` URL template, which holds a `{formatter}`
-/// placeholder for the size; for Ubisoft the store background's URL.
+/// placeholder for the size; for Ubisoft the store background's URL. EA has none.
 fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<&str>) -> Option<(PathBuf, Vec<String>)> {
     let banners = cache_dir.join("banners");
     match source {
@@ -180,6 +184,7 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<
             let file = cover.strip_prefix(ubisoft::ASSET_HOST)?;
             is_safe_image_name(file).then(|| (banners.join("ubisoft").join(file), vec![cover.to_string()]))
         }
+        Source::Ea => None,
     }
 }
 
@@ -337,6 +342,12 @@ mod tests {
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/../abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/a/b.jpg").is_none());
 
+        let ea = "https://achievements.gameservices.ea.com/achievements/icons/51789_196354_50844-1-208.png";
+        let (path, urls) = locate(cache, Source::Ea, "196354", ea).unwrap();
+        assert_eq!(path, cache.join("icons").join("ea").join("51789_196354_50844-1-208.png"));
+        assert_eq!(urls, [ea]);
+        assert!(locate(cache, Source::Ea, "1", "https://evil.example/achievements/icons/a.png").is_none());
+        assert!(locate(cache, Source::Ea, "1", "https://achievements.gameservices.ea.com/achievements/icons/../a.png").is_none());
         assert!(locate(cache, Source::Ubisoft, "1", "1.png").is_none(), "read from the archive instead");
     }
 
@@ -388,6 +399,7 @@ mod tests {
         assert_eq!(urls, [ubi]);
         assert!(locate_banner(cache, Source::Ubisoft, "635", Some("https://evil.example/ab.jpg")).is_none());
         assert!(locate_banner(cache, Source::Ubisoft, "635", None).is_none());
+        assert!(locate_banner(cache, Source::Ea, "1", Some(ubi)).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://evil.example/5a51d9_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/../x_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/5a51d9.png")).is_none());

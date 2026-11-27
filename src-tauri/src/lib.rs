@@ -1,4 +1,5 @@
 pub mod achievement;
+pub mod ea;
 pub mod gog;
 pub mod steam;
 pub mod ubisoft;
@@ -7,6 +8,7 @@ mod icons;
 mod rarity;
 mod settings;
 mod share;
+mod store;
 mod watch;
 
 use std::collections::HashMap;
@@ -23,6 +25,7 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use achievement::{game_key, Achievement, Source};
+use ea::EaPaths;
 use gog::GogPaths;
 use rarity::RarityCache;
 use settings::{Settings, Theme, TrophyKey, MAX_LEVELS, MAX_PER_ROW, MAX_SCALE, MIN_PER_ROW, MIN_SCALE};
@@ -66,6 +69,8 @@ struct HitRect {
 struct AppState {
     client: reqwest::Client,
     cache_dir: PathBuf,
+    /// Data kept for good, such as what has been read from the EA app's rotating log.
+    data_dir: PathBuf,
     settings_path: PathBuf,
     settings: Mutex<Settings>,
     /// Game names known so far, keyed by [`game_key`]: from Steam appmanifests, the GOG
@@ -162,8 +167,8 @@ struct Unlocked {
 }
 
 /// Reads every launcher that is installed. Fails only when none is.
-async fn load_unlocked() -> Result<Unlocked, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+async fn load_unlocked(data_dir: PathBuf) -> Result<Unlocked, String> {
+    tauri::async_runtime::spawn_blocking(move || {
         let mut unlocked = Unlocked {
             achievements: Vec::new(),
             names: HashMap::new(),
@@ -196,6 +201,11 @@ async fn load_unlocked() -> Result<Unlocked, String> {
             unlocked.achievements.extend(ubisoft.load_all());
             unlocked.names.extend(ubisoft.names());
             unlocked.covers.extend(ubisoft.banners());
+        }
+        if let Ok(ea) = EaPaths::locate(&data_dir) {
+            unlocked.launchers.push(Source::Ea);
+            unlocked.achievements.extend(ea.load_all());
+            unlocked.names.extend(ea.names());
         }
         if unlocked.launchers.is_empty() {
             return Err("No supported launcher found".to_string());
@@ -270,6 +280,7 @@ fn game_name(state: &AppState, achievement: &Achievement) -> String {
         Source::Steam => format!("App {}", achievement.game_id),
         Source::Gog => format!("GOG game {}", achievement.game_id),
         Source::Ubisoft => format!("Ubisoft game {}", achievement.game_id),
+        Source::Ea => format!("EA game {}", achievement.game_id),
     })
 }
 
@@ -327,7 +338,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         )
     };
 
-    let Unlocked { achievements: mut recent, names, covers, .. } = load_unlocked().await?;
+    let Unlocked { achievements: mut recent, names, covers, .. } = load_unlocked(state.data_dir.clone()).await?;
     // Each level keeps the trophies and order the user chose. Ones no longer found on disk are
     // skipped, and ones past what a level holds are not shown.
     let found: Vec<Vec<Achievement>> = trophy_levels
@@ -361,7 +372,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 /// Every unlocked achievement, newest first, for the trophy picker.
 #[tauri::command]
 async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> {
-    let Unlocked { mut achievements, names, launchers, covers } = load_unlocked().await?;
+    let Unlocked { mut achievements, names, launchers, covers } = load_unlocked(state.data_dir.clone()).await?;
     resolve_names(&state, names, &achievements.iter().collect::<Vec<_>>()).await;
     state.rarity.fill(&state.client, &mut achievements).await;
     let items = achievements
@@ -1178,7 +1189,7 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
 }
 
 /// Folders to watch for new unlocks, one or more per installed launcher.
-fn watch_targets() -> Vec<watch::Target> {
+fn watch_targets(data_dir: &Path) -> Vec<watch::Target> {
     let mut targets = Vec::new();
     match SteamPaths::locate() {
         Ok(paths) => targets.push(watch::Target {
@@ -1212,6 +1223,21 @@ fn watch_targets() -> Vec<watch::Target> {
                 changed: Box::new(|| true),
             });
         }
+    }
+    if let Ok(ea) = EaPaths::locate(data_dir) {
+        let mut last = ea.fingerprint();
+        let mut tail = ea.tail();
+        targets.push(watch::Target {
+            dir: ea.logs.clone(),
+            relevant: |name| name.starts_with(ea::LOG_PREFIX),
+            changed: Box::new(move || {
+                if !tail.has_news() {
+                    return false;
+                }
+                let now = ea.fingerprint();
+                now != std::mem::replace(&mut last, now)
+            }),
+        });
     }
     targets
 }
@@ -1445,6 +1471,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?;
+            let data_dir = app.path().app_data_dir()?;
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             migrate_old_settings(&settings_path);
             let settings = Settings::load(&settings_path);
@@ -1466,6 +1493,7 @@ pub fn run() {
                     .timeout(Duration::from_secs(10))
                     .build()?,
                 cache_dir,
+                data_dir: data_dir.clone(),
                 settings_path,
                 settings: Mutex::new(settings.clone()),
                 names: Mutex::new(names),
@@ -1490,7 +1518,7 @@ pub fn run() {
 
             migrate_old_autostart(app.handle());
             build_tray(app.handle(), &settings)?;
-            watch::spawn(app.handle().clone(), watch_targets());
+            watch::spawn(app.handle().clone(), watch_targets(&data_dir));
             if !cfg!(debug_assertions) {
                 spawn_update_check(app.handle().clone());
             }
