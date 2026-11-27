@@ -229,15 +229,38 @@ function renderItem(item: ShelfItem, isNew: boolean): HTMLElement {
     if (drag?.ghost) return;
     if (pinned !== slot) unpin();
     showTooltip(itemOf.get(slot)!, slot);
+    if (glared !== slot) sweepGlare(slab);
+    glared = slot;
   });
   slot.addEventListener("mouseleave", () => {
     if (pinned !== slot) hideTooltip();
+    // Pressing a trophy captures the pointer on the shelves, which leaves and re-enters its slot
+    // without the pointer moving; that must not count as lifting it again.
+    if (!drag) glared = null;
   });
   // Trophies capture the pointer for dragging, so their clicks are handled in `endDrag`.
   slot.addEventListener("click", () => {
     if (!slot.classList.contains("movable")) togglePin(slot);
   });
   return slot;
+}
+
+/*
+ * Legendary and platinum slabs catch the light as they are lifted: one sweep of their `::before`
+ * (see shelf.css), when the pointer comes onto the slot. It is started here rather than by
+ * `:hover`, which also toggles when a press captures the pointer, so a click replayed it.
+ */
+/** The slot the pointer is on whose glare has already swept, if any. */
+let glared: HTMLElement | null = null;
+
+const GLARE_SWEEP: Keyframe[] = [
+  { transform: "translateX(-180%) skewX(-16deg)" },
+  { transform: "translateX(330%) skewX(-16deg)" },
+];
+
+function sweepGlare(slab: HTMLElement) {
+  if (reducedMotion() || !slab.matches(".platinum, .tier-legendary")) return;
+  slab.animate(GLARE_SWEEP, { duration: 900, easing: LIFT_EASING, pseudoElement: "::before" });
 }
 
 /** Replaces `parent`'s children with `nodes`, leaving it untouched when they already match. */
@@ -466,6 +489,7 @@ function startDrag(event: PointerEvent, slot: HTMLElement) {
 function liftSlab(d: Drag, x: number, y: number) {
   hideTooltip();
   resetTilt();
+  glared = null; // Carried off, so it sweeps again when next lifted.
   const ghost = d.slot.firstElementChild!.cloneNode(true) as HTMLElement;
   ghost.classList.remove("new");
   ghost.classList.add("drag-ghost");
