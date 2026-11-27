@@ -69,6 +69,9 @@ struct AppState {
     /// Game names known so far, keyed by [`game_key`]: from Steam appmanifests, the GOG
     /// database, the Steam store API, or the disk cache.
     names: Mutex<HashMap<String, String>>,
+    /// Steam app IDs the store had no name for, with when it was last asked, so they are not
+    /// asked about again on every load.
+    name_misses: Mutex<HashMap<u32, u64>>,
     /// Steam rarities fetched from the Web API.
     rarity: RarityCache,
     /// Shelf area in the window, in physical pixels. Outside it, clicks pass through.
@@ -81,7 +84,15 @@ impl AppState {
     fn names_path(&self) -> PathBuf {
         self.cache_dir.join("names.json")
     }
+
+    fn name_misses_path(&self) -> PathBuf {
+        self.cache_dir.join("name-misses.json")
+    }
 }
+
+/// A Steam game the store had no name for (delisted, or the request failed) is asked about
+/// again after an hour.
+const NAME_RETRY_AFTER_SECS: u64 = 3600;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,11 +197,11 @@ async fn load_unlocked() -> Result<Unlocked, String> {
 }
 
 /// Makes sure every game in `achievements` has a name, asking the Steam store only for
-/// Steam games we have never seen, and saves new names to the disk cache. GOG names all
-/// come from its local database.
+/// Steam games we have never seen (several at once), and saves what it learns to the disk
+/// cache. A game the store had no name for is not asked about again until
+/// [`NAME_RETRY_AFTER_SECS`] pass. GOG names all come from its local database.
 async fn resolve_names(state: &AppState, local: HashMap<String, String>, achievements: &[&Achievement]) {
     state.names.lock().unwrap().extend(local);
-    let mut fetched_any = false;
     let mut app_ids: Vec<u32> = achievements
         .iter()
         .filter(|a| a.source == Source::Steam)
@@ -198,21 +209,48 @@ async fn resolve_names(state: &AppState, local: HashMap<String, String>, achieve
         .collect();
     app_ids.sort_unstable();
     app_ids.dedup();
-    for app_id in app_ids {
-        let key = game_key(Source::Steam, &app_id.to_string());
-        if state.names.lock().unwrap().contains_key(&key) {
-            continue;
-        }
-        if let Some(name) = steam::names::fetch_store_name(&state.client, app_id).await {
-            state.names.lock().unwrap().insert(key, name);
-            fetched_any = true;
+
+    let checked_at = rarity::now();
+    let unknown: Vec<u32> = {
+        let names = state.names.lock().unwrap();
+        let misses = state.name_misses.lock().unwrap();
+        app_ids
+            .into_iter()
+            .filter(|id| !names.contains_key(&game_key(Source::Steam, &id.to_string())))
+            .filter(|id| !misses.get(id).is_some_and(|&at| checked_at.saturating_sub(at) < NAME_RETRY_AFTER_SECS))
+            .collect()
+    };
+    if unknown.is_empty() {
+        return;
+    }
+
+    for chunk in unknown.chunks(rarity::CONCURRENT_REQUESTS) {
+        let tasks: Vec<_> = chunk
+            .iter()
+            .map(|&app_id| {
+                let client = state.client.clone();
+                tauri::async_runtime::spawn(async move { (app_id, steam::names::fetch_store_name(&client, app_id).await) })
+            })
+            .collect();
+        for task in tasks {
+            let Ok((app_id, name)) = task.await else { continue };
+            match name {
+                Some(name) => {
+                    state.names.lock().unwrap().insert(game_key(Source::Steam, &app_id.to_string()), name);
+                    state.name_misses.lock().unwrap().remove(&app_id);
+                }
+                None => {
+                    state.name_misses.lock().unwrap().insert(app_id, checked_at);
+                }
+            }
         }
     }
-    if fetched_any {
-        let json = serde_json::to_string(&*state.names.lock().unwrap()).unwrap_or_default();
-        let _ = std::fs::create_dir_all(&state.cache_dir);
-        let _ = std::fs::write(state.names_path(), json);
-    }
+
+    let names = serde_json::to_string(&*state.names.lock().unwrap()).unwrap_or_default();
+    let misses = serde_json::to_string(&*state.name_misses.lock().unwrap()).unwrap_or_default();
+    let _ = std::fs::create_dir_all(&state.cache_dir);
+    let _ = std::fs::write(state.names_path(), names);
+    let _ = std::fs::write(state.name_misses_path(), misses);
 }
 
 fn game_name(state: &AppState, achievement: &Achievement) -> String {
@@ -1379,6 +1417,10 @@ pub fn run() {
                 .ok()
                 .and_then(|text| serde_json::from_str(&text).ok())
                 .unwrap_or_default();
+            let name_misses: HashMap<u32, u64> = std::fs::read_to_string(cache_dir.join("name-misses.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or_default();
             let rarity = RarityCache::load(cache_dir.join("rarity.json"));
             let hit_rect = Arc::new(Mutex::new(None));
 
@@ -1392,6 +1434,7 @@ pub fn run() {
                 settings_path,
                 settings: Mutex::new(settings.clone()),
                 names: Mutex::new(names),
+                name_misses: Mutex::new(name_misses),
                 rarity,
                 hit_rect: hit_rect.clone(),
                 shares: Mutex::default(),

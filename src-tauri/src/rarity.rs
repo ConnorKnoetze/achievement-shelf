@@ -16,7 +16,7 @@ const REFRESH_AFTER_SECS: u64 = 7 * 24 * 3600;
 /// A game the API had nothing for (offline, or no public stats) is retried after an hour.
 const RETRY_AFTER_SECS: u64 = 3600;
 /// Requests in flight at once, to stay polite to the API on a first run with many games.
-const CONCURRENT_REQUESTS: usize = 8;
+pub(crate) const CONCURRENT_REQUESTS: usize = 8;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Entry {
@@ -37,7 +37,7 @@ pub struct RarityCache {
     entries: Mutex<HashMap<u32, Entry>>,
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
