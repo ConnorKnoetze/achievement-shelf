@@ -249,7 +249,7 @@ body {
   transform: translateY(-16px) scale(1.2);
 }
 
-/* Trophies can be picked up and moved along the trophy rails. */
+/* Achievements can be picked up: trophies to move along the trophy rails, any to drag out as an image. */
 .slot.movable > .slab {
   cursor: grab;
 }
@@ -603,59 +603,70 @@ body {
   text-wrap: pretty;
 }
 
-/* The platinum label sits just above the grade, as a second printed band. */
-.cert-platinum + .cert-grade {
-  margin-top: 5px;
-}
-
-.cert-platinum .grade-pct {
-  white-space: nowrap;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--ink-muted);
-}
-
-/* The printed grade, run across the foot of the certificate. */
-.cert-grade {
-  height: 26px;
-  margin-top: 12px;
-  border-radius: 3px;
-}
-
-.cert-grade .grade-tier,
-.cert-grade .grade-pct {
+/* The foot of the certificate, below a hairline: the grade on the left, printed as a small foil
+   chip beside the share of players, and the platinum chip on the right. Only the chips are foil;
+   the figures are printed straight onto the black stock. */
+.cert-foot {
   display: flex;
   align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cert-grade {
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: visible;
 }
 
 .cert-grade .grade-tier {
   flex: none;
-  padding: 0 10px;
-  font-size: 13px;
+  padding: 4px 7px 3px;
+  border-radius: 3px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 .cert-grade .grade-pct {
-  flex: 1;
-  gap: 5px;
-  padding: 0 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  background: none;
   font-size: 16px;
+  color: #eef0f2;
 }
 
 .cert-grade-note {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--ink-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #9aa1a9;
+}
+
+/* Ungraded: an outlined chip, not foil, and a quiet note. */
+.cert-grade:not([class*="tier-"]) .grade-tier {
+  background: none;
+  color: #9aa1a9;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
 .cert-grade:not([class*="tier-"]) .grade-pct {
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--ink-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #6c737b;
 }
 
-/* The image made when a trophy is dragged off the shelf to share it: the slab standing on a
-   length of trophy rail beside its certificate, on the dark of the setup windows' bench. It is
+.cert-platinum {
+  margin-left: auto;
+}
+
+/* The image made when an achievement is dragged off the shelf to share it: the slab standing on
+   a length of trophy rail beside its certificate, on the dark of the setup windows' bench. It is
    only ever drawn by src/share.ts, never shown on the shelf. */
 .share-card {
   display: flex;

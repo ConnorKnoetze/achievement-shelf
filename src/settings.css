@@ -1,42 +1,60 @@
 @import "./window.css";
 
+/* The shop's back counter: each group is filed behind a lilac divider card. */
+/* The rows are laid out for a narrow window; maximised, the column stays that width and
+   centres rather than stretching each label and its control to opposite edges. */
 body {
-  padding: 18px 18px 20px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 20px 18px 20px;
   user-select: none;
 }
 
+@media (min-height: 900px) and (min-width: 800px) {
+  body {
+    padding-top: 6vh;
+  }
+}
+
 h1 {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .group {
-  margin-bottom: 14px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel);
+  margin-bottom: 20px;
 }
 
 .group-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
-  padding: 12px 14px 4px;
+}
+
+.group-body {
+  border-radius: 0 8px 8px 8px;
+  background: var(--panel);
+}
+
+.group-plain .group-body {
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .total {
+  padding-bottom: 5px;
   color: var(--muted);
 }
 
 .total .figure {
-  color: var(--brass);
-  font-size: 16px;
+  color: var(--text);
+  font-size: 17px;
 }
 
 .setting {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 11px 14px;
+  padding: 12px 14px;
 }
 
 .setting + .setting {
@@ -51,6 +69,10 @@ h1 {
   min-width: 0;
 }
 
+.setting-label {
+  font-weight: 600;
+}
+
 .setting-hint {
   color: var(--muted);
   font-size: 12px;
@@ -61,7 +83,7 @@ h1 {
   display: flex;
   align-items: stretch;
   gap: 2px;
-  padding: 8px 0 4px 14px;
+  padding: 10px 0 4px 14px;
 }
 
 .level-controls {
@@ -73,7 +95,7 @@ h1 {
   padding-left: 12px;
 }
 
-/* The drawing sits in a recessed well, stacked bottom-up like the shelf itself. */
+/* The drawing sits on the shelf plate, stacked bottom-up like the shelf itself. */
 .diagram {
   flex: none;
   display: flex;
@@ -84,7 +106,7 @@ h1 {
   min-height: 112px;
   margin: 6px 0 10px;
   padding: 10px 9px 9px;
-  border-radius: 3px;
+  border-radius: 6px;
   background: var(--bench);
   box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.7);
 }
@@ -117,7 +139,7 @@ h1 {
     inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
-/* The tiny slab's printed label: a tier-coloured band on trophies, card stock on recents. */
+/* The tiny slab's printed label: a brass band on trophies, card stock on recents. */
 .dslab::before {
   content: "";
   display: block;
@@ -144,24 +166,17 @@ h1 {
   background: linear-gradient(to bottom, var(--rail-top) 0 1px, var(--rail-face) 1px 2px, var(--brass) 2px);
 }
 
-.diagram-empty {
-  align-self: center;
-  margin: auto 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .select {
   flex: none;
   max-width: 190px;
 }
 
-/* Size slider: a rail-black track filled in brass, with a card-stock grip. */
+/* Size slider: a pill track filled in lilac, with a round card-stock grip. */
 input[type="range"] {
   --fill: 50%;
   flex: none;
   width: 124px;
-  height: 18px;
+  height: 20px;
   margin: 0;
   appearance: none;
   background: transparent;
@@ -170,23 +185,28 @@ input[type="range"] {
 
 input[type="range"]::-webkit-slider-runnable-track {
   height: 6px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--brass-dark), var(--brass) var(--fill), var(--bench) var(--fill));
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--divider) var(--fill), var(--line-strong) var(--fill));
 }
 
 input[type="range"]::-webkit-slider-thumb {
   appearance: none;
-  width: 10px;
-  height: 18px;
-  margin-top: -6px;
-  border-radius: 2px;
-  background: linear-gradient(var(--card) 0 7px, #d9d5cb 7px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s var(--lift);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
 }
 
 input[type="range"]:focus-visible {
   outline-offset: 4px;
+  border-radius: 999px;
 }
 
 .range-value {
@@ -194,21 +214,21 @@ input[type="range"]:focus-visible {
   text-align: right;
 }
 
-/* A small square button beside a control, drawn like the stepper's. */
+/* A round button beside a control. */
 .icon-btn {
   flex: none;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   margin-left: -4px;
   padding: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--bench);
+  border-radius: 50%;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .icon-btn svg {
@@ -222,12 +242,13 @@ input[type="range"]:focus-visible {
 }
 
 .icon-btn:hover:not(:disabled) {
-  background: var(--panel-hover);
-  color: var(--brass);
+  border-color: var(--divider);
+  background: var(--divider);
+  color: var(--on-divider);
 }
 
 .icon-btn:disabled {
-  color: var(--line-strong);
+  color: var(--line-hover);
   cursor: default;
 }
 
@@ -235,17 +256,17 @@ input[type="range"]:focus-visible {
   cursor: pointer;
 }
 
-/* A slide switch drawn over the native checkbox, which keeps keyboard and screen reader support. */
+/* A pill switch drawn over the native checkbox, which keeps keyboard and screen reader support. */
 .toggle input {
   appearance: none;
   position: relative;
   flex: none;
-  width: 36px;
-  height: 20px;
+  width: 40px;
+  height: 22px;
   margin: 0;
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--bench);
+  border-radius: 999px;
+  background: var(--sunk);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
@@ -255,11 +276,11 @@ input[type="range"]:focus-visible {
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
   background: var(--muted);
-  transition: transform 0.18s var(--lift), background 0.15s;
+  transition: transform 0.2s var(--lift), background 0.15s;
 }
 
 .toggle:hover input:not(:checked, :disabled) {
@@ -280,27 +301,26 @@ input[type="range"]:focus-visible {
 }
 
 .toggle input:checked {
-  border-color: var(--brass);
-  background: var(--brass);
+  border-color: var(--divider);
+  background: var(--divider);
 }
 
 .toggle input:checked::after {
-  transform: translateX(16px);
-  background: var(--on-brass);
+  transform: translateX(18px);
+  background: var(--on-divider);
 }
 
-/* Reset asks for a second click; the armed button warns in brass. Wide enough for both labels,
-   so it keeps its size when armed. */
+/* Reset asks for a second click; armed, it turns into a lilac card. Wide enough for both
+   labels, so it keeps its size when armed. */
 #reset {
   flex: none;
-  justify-content: center;
-  min-width: 84px;
-  white-space: nowrap;
+  min-width: 88px;
 }
 
-.reset-armed {
-  border-color: var(--brass);
-  color: var(--brass);
+#reset.reset-armed {
+  border-color: var(--divider);
+  background: var(--divider);
+  color: var(--on-divider);
 }
 
 /* The installed version, quiet at the foot of the window. */

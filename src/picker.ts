@@ -1,11 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { dropPlace, findPlace, moveTo, type LevelGeometry, type Place } from "./levels";
-import { gradeLabel, platinumLabel } from "./rarity";
+import { gradeLabel, platinumLabel, rarityTier } from "./rarity";
 
 type Source = "steam" | "gog";
+type Launcher = Source | "all";
+type View = "games" | "achievements";
 type Sort = "newest" | "rarest" | "platinum";
+type GameSort = "az" | "recent" | "most";
+type ShelfFilter = "any" | "on" | "off";
 const SORTS: readonly Sort[] = ["newest", "rarest", "platinum"];
+const GAME_SORTS: readonly GameSort[] = ["az", "recent", "most"];
+const SHELF_FILTERS: readonly ShelfFilter[] = ["any", "on", "off"];
 
 interface PickerItem {
   source: Source;
@@ -32,6 +38,8 @@ interface PickerData {
   /** Every saved trophy level, top first, including any past `trophyRows`. */
   trophies: TrophyKey[][];
   items: PickerItem[];
+  /** GOG store banner templates by game key, handed back to `get_banner`. */
+  gogCovers: Record<string, string>;
 }
 
 /** The part of the settings view that `change_shelf_rows` returns which the picker uses. */
@@ -48,15 +56,44 @@ interface TrophyKey {
   apiName: string;
 }
 
-/** One tab per launcher, in display order. */
-const TABS: { source: Source; label: string; missing: string }[] = [
-  { source: "steam", label: "Steam", missing: "Steam not found on this PC" },
-  { source: "gog", label: "GOG", missing: "GOG Galaxy not found on this PC" },
+/** One game in the catalog: its achievements (newest first) and those the filters keep. */
+interface Game {
+  key: string;
+  source: Source;
+  gameId: string;
+  name: string;
+  items: PickerItem[];
+  matches: PickerItem[];
+}
+
+const LAUNCHERS: { value: Launcher; label: string; missing?: string }[] = [
+  { value: "all", label: "All" },
+  { value: "steam", label: "Steam", missing: "Steam was not found on this PC." },
+  { value: "gog", label: "GOG", missing: "GOG Galaxy was not found on this PC." },
 ];
-const TAB_STORAGE_KEY = "picker-tab";
-const SORT_STORAGE_KEY = "picker-sort";
-const HINT_EMPTY = "Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.";
-const HINT_PLACED = "Drag trophies on the rails to rearrange them, or click one to take it off the shelf.";
+/** Rarity filter chips, rarest last as the tiers climb; "ungraded" has no rarity data. */
+const TIERS: { value: string; label: string }[] = [
+  { value: "common", label: "Common" },
+  { value: "uncommon", label: "Uncommon" },
+  { value: "rare", label: "Rare" },
+  { value: "epic", label: "Epic" },
+  { value: "legendary", label: "Legendary" },
+  { value: "ungraded", label: "Ungraded" },
+];
+const SORT_LABELS: Record<Sort, string> = { newest: "Newest unlocks", rarest: "Rarest first", platinum: "Platinums first" };
+const GAME_SORT_LABELS: Record<GameSort, string> = { az: "A to Z", recent: "Recently unlocked", most: "Most unlocked" };
+
+const STORE = {
+  view: "picker-view",
+  launcher: "picker-launcher",
+  sort: "picker-sort",
+  gameSort: "picker-game-sort",
+  tiers: "picker-tiers",
+  platinum: "picker-platinum",
+  shelf: "picker-shelf-filter",
+};
+const HINT_EMPTY = "Open a game and click the achievements you are proudest of. They go on the brass rails above your recent unlocks.";
+const HINT_PLACED = "Drag a trophy to move it along or between rails. Click one to take it off.";
 
 const listEl = document.getElementById("list") as HTMLElement;
 const countEl = document.getElementById("count") as HTMLSpanElement;
@@ -66,21 +103,28 @@ const statusEl = document.getElementById("status") as HTMLParagraphElement;
 const searchEl = document.getElementById("search") as HTMLInputElement;
 const sortEl = document.getElementById("sort") as HTMLSelectElement;
 const clearEl = document.getElementById("clear") as HTMLButtonElement;
-const tabsEl = document.getElementById("tabs") as HTMLElement;
-const gamesEl = document.getElementById("games") as HTMLElement;
-const gameFilterEl = document.getElementById("game-filter") as HTMLInputElement;
+const viewsEl = document.getElementById("views") as HTMLElement;
+const launchersEl = document.getElementById("launchers") as HTMLElement;
+const tiersEl = document.getElementById("tiers") as HTMLElement;
+const platinumEl = document.getElementById("platinum") as HTMLButtonElement;
+const shelfFilterEl = document.getElementById("shelf-filter") as HTMLSelectElement;
+const clearFiltersEl = document.getElementById("clear-filters") as HTMLButtonElement;
 const shelfCountEl = document.getElementById("shelf-count") as HTMLOutputElement;
 const shelfAddEl = document.getElementById("shelf-add") as HTMLButtonElement;
 const shelfRemoveEl = document.getElementById("shelf-remove") as HTMLButtonElement;
-
-/** Sidebar key for the "All games" entry. */
-const ALL_GAMES = "";
 
 /** Drawn cup for achievements without an icon, as on the shelf. */
 const FALLBACK_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M7 6H4.5a2.5 2.5 0 0 0 2.9 3.9M17 6h2.5a2.5 2.5 0 0 1-2.9 3.9"/>' +
   '<path d="M12 14v4M8.5 20h7"/></svg>';
+/** A drawn record for games without a cover: grooves, a label, and the spindle hole. */
+const FALLBACK_COVER =
+  '<svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56" fill="#0d0910"/>' +
+  '<g fill="none" stroke="#2e2336" stroke-width="1"><circle cx="60" cy="60" r="50"/><circle cx="60" cy="60" r="44"/><circle cx="60" cy="60" r="38"/><circle cx="60" cy="60" r="32"/></g>' +
+  '<circle cx="60" cy="60" r="22" fill="currentColor"/><circle cx="60" cy="60" r="2.5" fill="#0d0910"/></svg>';
+const BACK_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
 
 let maxTrophies = 6;
 /** Slabs per rail, as on the shelf. */
@@ -88,6 +132,7 @@ let perRail = 6;
 let launchers: Source[] = [];
 let items: PickerItem[] = [];
 let itemsByKey = new Map<string, PickerItem>();
+let gogCovers: Record<string, string> = {};
 /** The saved trophies of each level, top first. */
 let trophies: TrophyKey[][] = [];
 /** Trophy levels shown on the shelf. */
@@ -95,19 +140,30 @@ let trophyRows = 1;
 let chosen = new Set<string>();
 /** Trophies drawn on the rail last time, so newly placed ones can drop into their slot. */
 let railKeys: Set<string> | null = null;
-/** The launcher tab shown, or null until the first load picks one. */
-let selectedSource: Source | null = null;
-/** The game picked in the sidebar (a game key), or ALL_GAMES. */
-let selectedGame = ALL_GAMES;
-let sort: Sort = storedSort();
-/** Cards by achievement key, so toggling only updates classes instead of re-rendering. */
-const cards = new Map<string, HTMLButtonElement>();
-/** Sidebar buttons by game key (ALL_GAMES for the first entry). */
-const gameButtons = new Map<string, HTMLButtonElement>();
-const tabButtons = new Map<Source, HTMLButtonElement>();
-/** Icon URLs by achievement key; null when the launcher has no icon. */
-const iconCache = new Map<string, Promise<string | null>>();
 let statusTimer: number | undefined;
+
+let view: View = readStored(STORE.view) === "achievements" ? "achievements" : "games";
+let launcher: Launcher = toLauncher(readStored(STORE.launcher));
+let sort: Sort = pick(SORTS, readStored(STORE.sort), "newest");
+let gameSort: GameSort = pick(GAME_SORTS, readStored(STORE.gameSort), "az");
+let tierFilter = new Set<string>(
+  (readStored(STORE.tiers) ?? "").split(",").filter((t) => TIERS.some((tier) => tier.value === t)),
+);
+let platinumOnly = readStored(STORE.platinum) === "1";
+let shelfFilter: ShelfFilter = pick(SHELF_FILTERS, readStored(STORE.shelf), "any");
+/** The game opened from the catalog, by game key, or null while the catalog shows. */
+let openGame: string | null = null;
+/** What the catalog's search and scroll were before a game was opened, to restore on Back. */
+let catalogQuery = "";
+let catalogScroll = 0;
+
+/** Achievement tiles by key, so toggling only updates classes instead of re-rendering. */
+const cards = new Map<string, HTMLButtonElement>();
+/** Cover stickers by game key, refreshed when the shelf changes. */
+const stickers = new Map<string, HTMLElement>();
+/** Icon and cover URLs; null when there is none. */
+const iconCache = new Map<string, Promise<string | null>>();
+const coverCache = new Map<string, Promise<string | null>>();
 
 const gameKeyOf = (item: TrophyKey) => `${item.source}:${item.gameId}`;
 const keyOf = (item: TrophyKey) => `${gameKeyOf(item)}:${item.apiName}`;
@@ -117,10 +173,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
   node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
-}
-
-function tick() {
-  return el("span", "tick");
 }
 
 function formatDate(unix: number): string {
@@ -151,22 +203,16 @@ function writeStored(key: string, value: string) {
   }
 }
 
-function storedTab(): Source | null {
-  const value = readStored(TAB_STORAGE_KEY);
-  return TABS.some((t) => t.source === value) ? (value as Source) : null;
+function pick<T extends string>(values: readonly T[], value: string | null, fallback: T): T {
+  return values.find((v) => v === value) ?? fallback;
 }
 
-function toSort(value: string | null): Sort {
-  return SORTS.find((s) => s === value) ?? "newest";
-}
-
-function storedSort(): Sort {
-  return toSort(readStored(SORT_STORAGE_KEY));
-}
-
-/** Items of the selected launcher; the sidebar, list, and search only cover these. */
-function tabItems(): PickerItem[] {
-  return items.filter((i) => i.source === selectedSource);
+function toLauncher(value: string | null): Launcher {
+  return pick(
+    LAUNCHERS.map((l) => l.value),
+    value,
+    "all",
+  );
 }
 
 function iconFor(item: PickerItem): Promise<string | null> {
@@ -175,6 +221,19 @@ function iconFor(item: PickerItem): Promise<string | null> {
   if (!url) {
     url = invoke<string | null>("get_icon", { source: item.source, gameId: item.gameId, icon: item.icon }).catch(() => null);
     iconCache.set(key, url);
+  }
+  return url;
+}
+
+function coverFor(game: Game): Promise<string | null> {
+  let url = coverCache.get(game.key);
+  if (!url) {
+    url = invoke<string | null>("get_banner", {
+      source: game.source,
+      gameId: game.gameId,
+      gogCover: gogCovers[game.key] ?? null,
+    }).catch(() => null);
+    coverCache.set(game.key, url);
   }
   return url;
 }
@@ -192,7 +251,7 @@ function insert(item: PickerItem | undefined, lazy: boolean): HTMLElement {
   box.append(img);
   if (lazy) {
     img.dataset.key = keyOf(item);
-    iconObserver.observe(img);
+    lazyObserver.observe(img);
   } else {
     void showIcon(img, item);
   }
@@ -209,13 +268,33 @@ async function showIcon(img: HTMLImageElement, item: PickerItem) {
   }
 }
 
-/** Icons are loaded only when a card scrolls into view; a library can hold thousands. */
-const iconObserver = new IntersectionObserver(
+/** Games currently drawn in the catalog, by key, for loading their covers as they scroll in. */
+const drawnGames = new Map<string, Game>();
+
+async function showCover(img: HTMLImageElement, game: Game) {
+  const url = await coverFor(game);
+  const art = img.parentElement;
+  if (url) {
+    img.src = url;
+    img.addEventListener("load", () => art?.classList.add("loaded"), { once: true });
+  } else {
+    img.remove();
+    art?.classList.add("no-cover");
+  }
+}
+
+/** Icons and covers are loaded only as they scroll into view; a library can hold thousands. */
+const lazyObserver = new IntersectionObserver(
   (entries) => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
       const img = entry.target as HTMLImageElement;
-      iconObserver.unobserve(img);
+      lazyObserver.unobserve(img);
+      const game = img.dataset.game ? drawnGames.get(img.dataset.game) : undefined;
+      if (game) {
+        void showCover(img, game);
+        continue;
+      }
       const item = itemsByKey.get(img.dataset.key ?? "");
       if (item) void showIcon(img, item);
     }
@@ -364,7 +443,7 @@ function renderRails() {
   }
   railsEl.replaceChildren(...rails);
   layoutRails(shownSlabs, false);
-  if (placedCount() === 0) railRows[0].append(el("span", "rail-placard", "Pick achievements below"));
+  if (placedCount() === 0) railRows[0].append(el("span", "rail-placard", "Open a game below and click an achievement"));
 }
 
 /** Saves `levels` as the trophies the shelf shows on each level. */
@@ -590,6 +669,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && railDrag) endRailDrag(false);
 });
 
+
 /** Shows the trophy levels and their limits, and resizes the rails to match. */
 function showShelves(levels: number, rowLength: number, canAdd: boolean, canRemove: boolean) {
   trophyRows = levels;
@@ -612,6 +692,11 @@ async function changeShelves(add: boolean) {
   }
 }
 
+function stickerText(sticker: HTMLElement, count: number) {
+  sticker.hidden = count === 0;
+  sticker.replaceChildren(el("b", "", String(count)), el("small", "", "on shelf"));
+}
+
 function updateChosen(levels: TrophyKey[][]) {
   trophies = levels;
   const keys = levels.flat();
@@ -621,13 +706,9 @@ function updateChosen(levels: TrophyKey[][]) {
     card.classList.toggle("chosen", on);
     card.setAttribute("aria-pressed", String(on));
   }
-  const gamesWithTrophies = new Set(keys.map(gameKeyOf));
-  for (const [gameKey, button] of gameButtons) {
-    button.classList.toggle("has-trophy", gameKey !== ALL_GAMES && gamesWithTrophies.has(gameKey));
-  }
-  for (const [source, button] of tabButtons) {
-    button.classList.toggle("has-trophy", keys.some((k) => k.source === source));
-  }
+  const perGame = new Map<string, number>();
+  for (const key of keys) perGame.set(gameKeyOf(key), (perGame.get(gameKeyOf(key)) ?? 0) + 1);
+  for (const [gameKey, sticker] of stickers) stickerText(sticker, perGame.get(gameKey) ?? 0);
   hintEl.textContent = chosen.size ? HINT_PLACED : HINT_EMPTY;
   clearEl.disabled = chosen.size === 0;
   renderRails();
@@ -646,39 +727,58 @@ async function setTrophy(key: TrophyKey, trophy: boolean) {
   }
 }
 
-function renderCard(item: PickerItem, showGame: boolean): HTMLButtonElement {
-  const card = el("button", "card");
-  card.type = "button";
-  const onShelf = el("span", "on-shelf");
-  onShelf.append(tick(), "On shelf");
-  const head = el("div", "card-head");
-  head.append(el("span", "card-title", item.title || item.apiName), onShelf);
-  // The footer reads like the shelf's certificate: date on the left, printed grade on the right.
-  const meta = el("span", "card-meta", formatDate(item.unlockedAt));
-  if (showGame) meta.append(` · ${item.gameName}`);
-  const foot = el("div", "card-foot");
-  const grades = el("span", "card-grades");
-  if (item.platinum) grades.append(platinumLabel("grade card-grade"));
-  grades.append(gradeLabel(item.rarity, "grade card-grade"));
-  foot.append(meta, grades);
-  const text = el("div", "card-text");
-  text.append(head, el("div", "card-desc", item.description || "No description"), foot);
-  card.append(insert(item, true), text);
-  card.addEventListener("click", () => void setTrophy(item, !chosen.has(keyOf(item))));
-  return card;
+/* ---- Filters ---- */
+
+const tierOf = (item: PickerItem) => rarityTier(item.rarity) ?? "ungraded";
+
+/** Whether any filter that narrows achievements is on (the launcher and search aside). */
+const achievementFiltersOn = () => tierFilter.size > 0 || platinumOnly || shelfFilter !== "any";
+
+function passes(item: PickerItem): boolean {
+  if (tierFilter.size && !tierFilter.has(tierOf(item))) return false;
+  if (platinumOnly && !item.platinum) return false;
+  if (shelfFilter === "on" && !chosen.has(keyOf(item))) return false;
+  if (shelfFilter === "off" && chosen.has(keyOf(item))) return false;
+  return true;
+}
+
+/** Items of the chosen launcher; everything in the list covers only these. */
+function launcherItems(): PickerItem[] {
+  return launcher === "all" ? items : items.filter((i) => i.source === launcher);
 }
 
 /** Groups items by game. Items arrive newest first, so games are ordered by their latest unlock. */
-function groupByGame(list: PickerItem[]): Map<string, PickerItem[]> {
-  const games = new Map<string, PickerItem[]>();
+function gamesOf(list: PickerItem[]): Game[] {
+  const games = new Map<string, Game>();
   for (const item of list) {
     const key = gameKeyOf(item);
-    const group = games.get(key);
-    if (group) group.push(item);
-    else games.set(key, [item]);
+    let game = games.get(key);
+    if (!game) {
+      game = { key, source: item.source, gameId: item.gameId, name: item.gameName, items: [], matches: [] };
+      games.set(key, game);
+    }
+    game.items.push(item);
+    if (passes(item)) game.matches.push(item);
   }
-  return games;
+  return [...games.values()];
 }
+
+/** The name a record shop files a game under: without a leading "The", accents dropped. */
+function filingName(name: string): string {
+  return name
+    .replace(/^the\s+/i, "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim();
+}
+
+/** The divider a game is filed behind: its first letter, or "#" for anything else. */
+function letterOf(name: string): string {
+  const first = filingName(name).charAt(0).toUpperCase();
+  return first >= "A" && first <= "Z" ? first : "#";
+}
+
+const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 
 /** Rarest first; achievements without rarity data go last, newest first among them. */
 function byRarity(a: PickerItem, b: PickerItem): number {
@@ -691,139 +791,399 @@ function byPlatinum(a: PickerItem, b: PickerItem): number {
   return Number(b.platinum) - Number(a.platinum);
 }
 
-function selectTab(source: Source, focus = false) {
-  if (source !== selectedSource) {
-    selectedSource = source;
-    selectedGame = ALL_GAMES;
-    gameFilterEl.value = "";
-    writeStored(TAB_STORAGE_KEY, source);
-    renderTabs();
-    renderSidebar();
-    render();
-    listEl.scrollTop = 0;
-  }
-  if (focus) tabButtons.get(source)?.focus();
+function sortItems(list: PickerItem[]): PickerItem[] {
+  if (sort === "rarest") return [...list].sort(byRarity);
+  if (sort === "platinum") return [...list].sort(byPlatinum);
+  return list;
 }
 
-function renderTabs() {
-  tabButtons.clear();
-  const buttons = TABS.map(({ source, label }, index) => {
-    const selected = source === selectedSource;
-    const button = el("button", selected ? "tab selected" : "tab");
+const query = () => searchEl.value.trim().toLowerCase();
+
+/** The filters in words, for an empty result: `"hades", Steam, Legendary or Epic`. */
+function describeFilters(): string {
+  const parts: string[] = [];
+  if (query()) parts.push(`"${searchEl.value.trim()}"`);
+  if (launcher !== "all") parts.push(LAUNCHERS.find((l) => l.value === launcher)!.label);
+  if (tierFilter.size) parts.push(TIERS.filter((t) => tierFilter.has(t.value)).map((t) => t.label).join(" or "));
+  if (platinumOnly) parts.push("Platinum");
+  if (shelfFilter === "on") parts.push("on the shelf");
+  if (shelfFilter === "off") parts.push("not on the shelf");
+  return parts.join(", ");
+}
+
+function clearFilters() {
+  tierFilter = new Set();
+  platinumOnly = false;
+  shelfFilter = "any";
+  launcher = "all";
+  searchEl.value = "";
+  saveFilters();
+  render(true);
+}
+
+function saveFilters() {
+  writeStored(STORE.launcher, launcher);
+  writeStored(STORE.tiers, [...tierFilter].join(","));
+  writeStored(STORE.platinum, platinumOnly ? "1" : "0");
+  writeStored(STORE.shelf, shelfFilter);
+}
+
+/* ---- Controls ---- */
+
+const inCatalog = () => view === "games" && openGame === null;
+
+function renderControls() {
+  for (const button of viewsEl.querySelectorAll<HTMLButtonElement>("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.view === view));
+  }
+  const games = (source: Launcher) => new Set((source === "all" ? items : items.filter((i) => i.source === source)).map(gameKeyOf)).size;
+  launchersEl.replaceChildren(
+    ...LAUNCHERS.map(({ value, label }) => {
+      const button = el("button", "");
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(value === launcher));
+      const count = games(value);
+      button.title = `${count} ${count === 1 ? "game" : "games"}`;
+      button.append(label, el("span", "seg-count", String(count)));
+      button.addEventListener("click", () => {
+        launcher = value;
+        saveFilters();
+        render(true);
+      });
+      return button;
+    }),
+  );
+  for (const chip of tiersEl.querySelectorAll<HTMLButtonElement>("button")) {
+    chip.setAttribute("aria-pressed", String(tierFilter.has(chip.dataset.tier!)));
+  }
+  platinumEl.setAttribute("aria-pressed", String(platinumOnly));
+  shelfFilterEl.value = shelfFilter;
+  const options = inCatalog()
+    ? GAME_SORTS.map((s) => new Option(GAME_SORT_LABELS[s], s))
+    : SORTS.map((s) => new Option(SORT_LABELS[s], s));
+  sortEl.replaceChildren(...options);
+  sortEl.value = inCatalog() ? gameSort : sort;
+  const game = openGame ? drawnGames.get(openGame) : undefined;
+  searchEl.placeholder = inCatalog() ? "Search games" : game ? `Search ${game.name}` : "Search achievements or games";
+  searchEl.setAttribute("aria-label", searchEl.placeholder);
+  clearFiltersEl.hidden = !(achievementFiltersOn() || launcher !== "all");
+}
+
+function tierChips() {
+  tiersEl.replaceChildren(
+    ...TIERS.map(({ value, label }) => {
+      const chip = el("button", "chip");
+      chip.type = "button";
+      chip.dataset.tier = value;
+      const swatch = el("span", value === "ungraded" ? "chip-swatch" : `chip-swatch tier-${value}`);
+      swatch.setAttribute("aria-hidden", "true");
+      chip.append(swatch, label);
+      chip.addEventListener("click", () => {
+        if (!tierFilter.delete(value)) tierFilter.add(value);
+        saveFilters();
+        render(true);
+      });
+      return chip;
+    }),
+  );
+}
+
+/* ---- The list ---- */
+
+function emptyState(message: string, offerClear: boolean): HTMLElement {
+  const box = el("div", "empty");
+  box.append(el("p", "", message));
+  if (offerClear) {
+    const button = el("button", "btn", "Clear filters");
     button.type = "button";
-    button.id = `tab-${source}`;
-    button.setAttribute("role", "tab");
-    button.setAttribute("aria-selected", String(selected));
-    button.setAttribute("aria-controls", "list");
-    button.tabIndex = selected ? 0 : -1;
-    const count = items.filter((i) => i.source === source).length;
-    button.append(el("span", "tab-label", label), el("span", "tab-count", String(count)), tick());
-    button.addEventListener("click", () => selectTab(source));
-    // Arrow keys move between tabs, as in any tab list.
-    button.addEventListener("keydown", (event) => {
-      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-      if (!step) return;
-      event.preventDefault();
-      selectTab(TABS[(index + step + TABS.length) % TABS.length].source, true);
-    });
-    tabButtons.set(source, button);
-    return button;
-  });
-  tabsEl.replaceChildren(...buttons);
-  if (selectedSource) listEl.setAttribute("aria-labelledby", `tab-${selectedSource}`);
-}
-
-function selectGame(gameKey: string) {
-  selectedGame = gameKey;
-  for (const [key, button] of gameButtons) {
-    button.classList.toggle("selected", key === gameKey);
-    button.setAttribute("aria-current", String(key === gameKey));
+    button.addEventListener("click", clearFilters);
+    box.append(button);
   }
-  render();
-  listEl.scrollTop = 0;
+  return box;
 }
 
-function gameButton(gameKey: string, name: string, count: number): HTMLButtonElement {
-  const button = el("button", gameKey === selectedGame ? "game-button selected" : "game-button");
-  button.type = "button";
-  button.title = name;
-  button.setAttribute("aria-current", String(gameKey === selectedGame));
-  button.append(tick(), el("span", "game-button-name", name), el("span", "game-button-count", String(count)));
-  button.addEventListener("click", () => selectGame(gameKey));
-  gameButtons.set(gameKey, button);
-  return button;
-}
-
-function renderSidebar() {
-  gameButtons.clear();
-  const list = tabItems();
-  const filter = gameFilterEl.value.trim().toLowerCase();
-  const buttons = [gameButton(ALL_GAMES, "All games", list.length)];
-  for (const [gameKey, group] of groupByGame(list)) {
-    // Keep the selected game visible even when the filter would hide it.
-    if (filter && gameKey !== selectedGame && !group[0].gameName.toLowerCase().includes(filter)) continue;
-    buttons.push(gameButton(gameKey, group[0].gameName, group.length));
-  }
-  gamesEl.replaceChildren(...buttons);
-  updateChosen(trophies);
-}
-
-function emptyText(list: PickerItem[]): string {
-  if (list.length) return "Nothing matches your search. Try a shorter word, or pick All games.";
-  const tab = TABS.find((t) => t.source === selectedSource);
-  if (tab && !launchers.includes(tab.source)) return tab.missing;
+/** The message when the launcher itself has nothing, or null when it has achievements. */
+function launcherEmpty(): string | null {
+  if (launcherItems().length) return null;
+  const entry = LAUNCHERS.find((l) => l.value === launcher);
+  if (entry?.missing && !launchers.includes(entry.value as Source)) return entry.missing;
+  if (launcher === "all" && launchers.length === 0) return "Neither Steam nor GOG Galaxy was found on this PC.";
   return "No unlocked achievements found yet. New unlocks show up here as they happen.";
 }
 
-function render() {
-  iconObserver.disconnect();
-  cards.clear();
-  const list = tabItems();
-  const query = searchEl.value.trim().toLowerCase();
-  const matches = list.filter(
-    (i) =>
-      (selectedGame === ALL_GAMES || gameKeyOf(i) === selectedGame) &&
-      (!query || `${i.title} ${i.description} ${i.gameName}`.toLowerCase().includes(query)),
-  );
+function renderSleeve(game: Game): HTMLButtonElement {
+  const sleeve = el("button", "sleeve");
+  sleeve.type = "button";
+  const art = el("span", "sleeve-art");
+  const fallback = el("span", "sleeve-fallback");
+  fallback.innerHTML = FALLBACK_COVER;
+  fallback.append(el("span", "sleeve-initial", letterOf(game.name) === "#" ? game.name.charAt(0) : letterOf(game.name)));
+  const img = el("img", "");
+  img.alt = "";
+  img.draggable = false;
+  img.dataset.game = game.key;
+  art.append(fallback, img);
+  lazyObserver.observe(img);
+  const sticker = el("span", "sticker sleeve-sticker");
+  stickers.set(game.key, sticker);
+  const count = game.items.length;
+  const filtered = achievementFiltersOn();
+  const source = game.source === "steam" ? "Steam" : "GOG";
+  const meta = filtered ? `${game.matches.length} of ${count} match` : `${count} unlocked`;
+  sleeve.append(art, sticker, el("span", "sleeve-name", game.name), el("span", "sleeve-meta", `${source} · ${meta}`));
+  sleeve.setAttribute("aria-label", `${game.name}, ${source}, ${meta}`);
+  sleeve.addEventListener("click", () => openGameView(game.key));
+  return sleeve;
+}
 
-  if (matches.length === 0) {
-    listEl.replaceChildren(el("p", "empty", emptyText(list)));
-    updateChosen(trophies);
-    return;
-  }
+/** The catalog: covers in a bin, filed behind A to Z dividers when sorted by name. */
+function renderCatalog() {
+  const q = query();
+  const all = gamesOf(launcherItems());
+  const games = all.filter((g) => (!achievementFiltersOn() || g.matches.length) && (!q || g.name.toLowerCase().includes(q)));
+  const empty = launcherEmpty();
+  if (empty) return listEl.replaceChildren(emptyState(empty, launcher !== "all"));
+  if (!games.length) return listEl.replaceChildren(emptyState(`No games match ${describeFilters()}.`, true));
 
-  const gridOf = (group: PickerItem[], showGame: boolean) => {
-    const grid = el("div", "grid");
-    for (const item of group) {
-      const card = renderCard(item, showGame);
-      cards.set(keyOf(item), card);
-      grid.append(card);
+  if (gameSort === "az") games.sort((a, b) => filingName(a.name).localeCompare(filingName(b.name), undefined, { sensitivity: "base" }));
+  if (gameSort === "most") games.sort((a, b) => b.items.length - a.items.length);
+
+  const unlocked = games.reduce((n, g) => n + (achievementFiltersOn() ? g.matches.length : g.items.length), 0);
+  const tally = el("p", "tally", `${games.length} ${games.length === 1 ? "game" : "games"} · ${unlocked.toLocaleString()} ${achievementFiltersOn() ? "matching" : "unlocked"}`);
+  const crates = el("div", "crates");
+  crates.append(tally);
+  const layout = el("div", "wrap crate-layout");
+
+  if (gameSort === "az") {
+    const byLetter = new Map<string, Game[]>();
+    for (const game of games) {
+      const letter = letterOf(game.name);
+      byLetter.set(letter, [...(byLetter.get(letter) ?? []), game]);
     }
-    return grid;
-  };
-
-  if (sort === "rarest" || sort === "platinum") {
-    // One ranked list across games, so the rarest pieces, or the platinums, in the library come first.
-    const section = el("section", "flat");
-    section.append(gridOf([...matches].sort(sort === "rarest" ? byRarity : byPlatinum), selectedGame === ALL_GAMES));
-    listEl.replaceChildren(section);
+    const nav = el("nav", "dividers");
+    nav.setAttribute("aria-label", "Jump to letter");
+    for (const letter of LETTERS) {
+      const tab = el("button", "divider-tab", letter);
+      tab.type = "button";
+      tab.dataset.letter = letter;
+      const filed = byLetter.get(letter);
+      if (!filed) {
+        tab.disabled = true;
+        tab.setAttribute("aria-label", `No games under ${letter}`);
+      } else {
+        tab.setAttribute("aria-label", `${filed.length} ${filed.length === 1 ? "game" : "games"} under ${letter}`);
+        tab.addEventListener("click", () => jumpTo(letter));
+      }
+      nav.append(tab);
+    }
+    for (const [letter, filed] of byLetter) {
+      const section = el("section", "crate");
+      section.id = `crate-${letter === "#" ? "num" : letter}`;
+      section.dataset.letter = letter;
+      const heading = el("h2", "divider-card", letter);
+      const bin = el("div", "bin divider-rule");
+      bin.append(...filed.map(renderSleeve));
+      section.append(heading, bin);
+      crates.append(section);
+    }
+    layout.append(nav, crates);
   } else {
-    const sections: HTMLElement[] = [];
-    for (const group of groupByGame(matches).values()) {
-      const section = el("section", "game");
-      const heading = el("h2", "game-name", group[0].gameName);
-      heading.append(el("span", "game-count", String(group.length)));
-      section.append(heading, gridOf(group, false));
-      sections.push(section);
-    }
-    listEl.replaceChildren(...sections);
+    layout.classList.add("no-dividers");
+    const bin = el("div", "bin");
+    bin.append(...games.map(renderSleeve));
+    crates.append(bin);
+    layout.append(crates);
   }
+  for (const game of games) drawnGames.set(game.key, game);
+  listEl.replaceChildren(layout);
+  spyLetter();
+}
+
+function jumpTo(letter: string) {
+  const section = listEl.querySelector<HTMLElement>(`section[data-letter="${letter === "#" ? "#" : letter}"]`);
+  if (!section) return;
+  listEl.scrollTo({ top: section.offsetTop - 8, behavior: reducedMotion() ? "auto" : "smooth" });
+}
+
+/** Pops out the divider of the letter at the top of the bin. */
+function spyLetter() {
+  const tabs = listEl.querySelectorAll<HTMLButtonElement>(".divider-tab");
+  if (!tabs.length) return;
+  let current: string | undefined;
+  for (const section of listEl.querySelectorAll<HTMLElement>("section.crate")) {
+    if (section.offsetTop - listEl.scrollTop <= 40) current = section.dataset.letter;
+    else break;
+  }
+  current ??= listEl.querySelector<HTMLElement>("section.crate")?.dataset.letter;
+  for (const tab of tabs) {
+    const on = tab.dataset.letter === current;
+    tab.classList.toggle("current", on);
+    if (on) tab.setAttribute("aria-current", "true");
+    else tab.removeAttribute("aria-current");
+  }
+}
+
+let spyFrame = 0;
+listEl.addEventListener(
+  "scroll",
+  () => {
+    if (spyFrame) return;
+    spyFrame = requestAnimationFrame(() => {
+      spyFrame = 0;
+      spyLetter();
+    });
+  },
+  { passive: true },
+);
+
+function renderTile(item: PickerItem, showGame: boolean): HTMLButtonElement {
+  const tile = el("button", "tile");
+  tile.type = "button";
+  // Fixed furniture: title, one line of description, then the date and the printed grade.
+  const head = el("span", "tile-head");
+  head.append(el("span", "tile-title", item.title || item.apiName));
+  const desc = el("span", "tile-desc-wrap");
+  const descText = el("span", "tile-desc", item.description || "No description");
+  desc.append(descText);
+  const meta = el("span", "tile-meta", formatDate(item.unlockedAt));
+  if (showGame) meta.append(` · ${item.gameName}`);
+  const grades = el("span", "tile-grades");
+  if (item.platinum) grades.append(platinumLabel("grade tile-grade"));
+  grades.append(gradeLabel(item.rarity, "grade tile-grade"));
+  const foot = el("span", "tile-foot");
+  foot.append(meta, grades);
+  const text = el("span", "tile-text");
+  text.append(head, desc, foot);
+  // Only a description that is cut off opens over the tiles below.
+  const measure = () => tile.classList.toggle("long", descText.scrollWidth > descText.clientWidth);
+  tile.addEventListener("pointerenter", measure);
+  tile.addEventListener("focus", measure);
+  const sticker = el("span", "sticker tile-sticker");
+  sticker.append(el("small", "", "On shelf"));
+  sticker.setAttribute("aria-hidden", "true");
+  tile.append(insert(item, true), text, sticker);
+  tile.addEventListener("click", () => void setTrophy(item, !chosen.has(keyOf(item))));
+  cards.set(keyOf(item), tile);
+  return tile;
+}
+
+function tileGrid(list: PickerItem[], showGame: boolean): HTMLElement {
+  const grid = el("div", "tiles");
+  grid.append(...list.map((item) => renderTile(item, showGame)));
+  return grid;
+}
+
+function matchesQuery(item: PickerItem, withGame: boolean): boolean {
+  const q = query();
+  return !q || `${item.title} ${item.description}${withGame ? ` ${item.gameName}` : ""}`.toLowerCase().includes(q);
+}
+
+/** One game's achievements, opened from its cover. */
+function renderGame(game: Game) {
+  const layout = el("div", "wrap game-view");
+  const head = el("div", "game-head");
+  const back = el("button", "btn back");
+  back.type = "button";
+  back.innerHTML = BACK_ICON;
+  back.append("All games");
+  back.addEventListener("click", closeGameView);
+  const cover = el("span", "game-cover sleeve-art");
+  const fallback = el("span", "sleeve-fallback");
+  fallback.innerHTML = FALLBACK_COVER;
+  const img = el("img", "");
+  img.alt = "";
+  cover.append(fallback, img);
+  void showCover(img, game);
+  const onShelf = game.items.filter((i) => chosen.has(keyOf(i))).length;
+  const title = el("div", "game-title");
+  const source = game.source === "steam" ? "Steam" : "GOG";
+  title.append(
+    el("h2", "", game.name),
+    el("p", "muted", `${source} · ${game.items.length} unlocked${onShelf ? ` · ${onShelf} on the shelf` : ""}`),
+  );
+  head.append(back, cover, title);
+  layout.append(head);
+  const list = sortItems(game.matches.filter((i) => matchesQuery(i, false)));
+  layout.append(list.length ? tileGrid(list, false) : emptyState(`No achievements in ${game.name} match ${describeFilters()}.`, true));
+  listEl.replaceChildren(layout);
+}
+
+/** Every achievement across games: by game when newest first, one ranked list otherwise. */
+function renderAchievements() {
+  const empty = launcherEmpty();
+  if (empty) return listEl.replaceChildren(emptyState(empty, launcher !== "all"));
+  const matches = launcherItems().filter((i) => passes(i) && matchesQuery(i, true));
+  if (!matches.length) return listEl.replaceChildren(emptyState(`No achievements match ${describeFilters()}.`, true));
+  const layout = el("div", "wrap achievements-view");
+  if (sort === "newest") {
+    for (const game of gamesOf(matches)) {
+      const section = el("section", "game-group");
+      const heading = el("h2", "divider-card", game.name);
+      heading.append(el("span", "divider-count", String(game.items.length)));
+      const grid = tileGrid(game.items, false);
+      grid.classList.add("divider-rule");
+      section.append(heading, grid);
+      layout.append(section);
+    }
+  } else {
+    layout.append(tileGrid(sortItems(matches), true));
+  }
+  listEl.replaceChildren(layout);
+}
+
+/** Redraws the list; `toTop` scrolls it back to the start, as after a filter change. */
+function render(toTop = false) {
+  lazyObserver.disconnect();
+  cards.clear();
+  stickers.clear();
+  if (view === "games" && openGame) {
+    const game = gamesOf(launcherItems()).find((g) => g.key === openGame);
+    if (game) {
+      drawnGames.set(game.key, game);
+      renderControls();
+      renderGame(game);
+    } else {
+      openGame = null;
+    }
+  }
+  if (view === "achievements") {
+    renderControls();
+    renderAchievements();
+  } else if (!openGame) {
+    drawnGames.clear();
+    renderControls();
+    renderCatalog();
+  }
+  listEl.setAttribute("aria-busy", "false");
+  if (toTop) listEl.scrollTop = 0;
   updateChosen(trophies);
 }
 
-/** First tab to show: the remembered one, else the first launcher with unlocks. */
-function initialTab(): Source {
-  return storedTab() ?? TABS.find((t) => items.some((i) => i.source === t.source))?.source ?? TABS[0].source;
+function openGameView(key: string) {
+  catalogQuery = searchEl.value;
+  catalogScroll = listEl.scrollTop;
+  searchEl.value = "";
+  openGame = key;
+  render(true);
+}
+
+function closeGameView() {
+  openGame = null;
+  searchEl.value = catalogQuery;
+  render();
+  listEl.scrollTop = catalogScroll;
+  spyLetter();
+}
+
+function setView(next: View) {
+  if (next === view && !openGame) return;
+  if (openGame) {
+    openGame = null;
+    searchEl.value = catalogQuery;
+  }
+  view = next;
+  writeStored(STORE.view, view);
+  render(true);
 }
 
 async function load() {
@@ -831,7 +1191,8 @@ async function load() {
   try {
     data = await invoke<PickerData>("get_unlocked");
   } catch (err) {
-    listEl.replaceChildren(el("p", "empty", String(err)));
+    listEl.replaceChildren(emptyState(String(err), false));
+    listEl.setAttribute("aria-busy", "false");
     return;
   }
   const changed = data.items.length !== items.length || data.items.some((item, i) => keyOf(item) !== keyOf(items[i]));
@@ -839,28 +1200,62 @@ async function load() {
   launchers = data.launchers;
   items = data.items;
   itemsByKey = new Map(items.map((i) => [keyOf(i), i]));
+  gogCovers = data.gogCovers ?? {};
   trophies = data.trophies;
-  // Choosing a trophy also fires an update; only rebuild the lists when the achievements changed.
-  if (changed || cards.size === 0) {
-    selectedSource ??= initialTab();
-    if (!tabItems().some((i) => gameKeyOf(i) === selectedGame)) selectedGame = ALL_GAMES;
-    renderTabs();
-    renderSidebar();
+  chosen = new Set(trophies.flat().map(keyOf));
+  // Choosing a trophy also fires an update; only rebuild the list when the achievements changed.
+  if (changed || listEl.getAttribute("aria-busy") === "true") {
+    const scroll = listEl.scrollTop;
     render();
+    listEl.scrollTop = scroll;
+    spyLetter();
   } else {
     updateChosen(trophies);
   }
 }
 
-sortEl.value = sort;
+tierChips();
+for (const button of viewsEl.querySelectorAll<HTMLButtonElement>("button")) {
+  button.addEventListener("click", () => setView(button.dataset.view as View));
+}
 sortEl.addEventListener("change", () => {
-  sort = toSort(sortEl.value);
-  writeStored(SORT_STORAGE_KEY, sort);
-  render();
-  listEl.scrollTop = 0;
+  if (inCatalog()) {
+    gameSort = pick(GAME_SORTS, sortEl.value, "az");
+    writeStored(STORE.gameSort, gameSort);
+  } else {
+    sort = pick(SORTS, sortEl.value, "newest");
+    writeStored(STORE.sort, sort);
+  }
+  render(true);
 });
-searchEl.addEventListener("input", render);
-gameFilterEl.addEventListener("input", renderSidebar);
+searchEl.addEventListener("input", () => render(true));
+platinumEl.addEventListener("click", () => {
+  platinumOnly = !platinumOnly;
+  saveFilters();
+  render(true);
+});
+shelfFilterEl.addEventListener("change", () => {
+  shelfFilter = pick(SHELF_FILTERS, shelfFilterEl.value, "any");
+  saveFilters();
+  render(true);
+});
+clearFiltersEl.addEventListener("click", clearFilters);
+// On a narrow window the filter rows scroll sideways: the mouse wheel scrolls them, and the
+// fade at their edge goes once nothing more is hidden.
+for (const row of document.querySelectorAll<HTMLElement>(".filter-row")) {
+  const markEnd = () => row.classList.toggle("at-end", row.scrollLeft + row.clientWidth >= row.scrollWidth - 1);
+  row.addEventListener(
+    "wheel",
+    (event) => {
+      if (row.scrollWidth <= row.clientWidth || !event.deltaY || event.shiftKey) return;
+      event.preventDefault();
+      row.scrollLeft += event.deltaY;
+    },
+    { passive: false },
+  );
+  row.addEventListener("scroll", markEnd, { passive: true });
+  new ResizeObserver(markEnd).observe(row);
+}
 clearEl.addEventListener("click", () => {
   invoke("clear_trophies")
     .then(() => updateChosen([]))
@@ -868,5 +1263,11 @@ clearEl.addEventListener("click", () => {
 });
 shelfAddEl.addEventListener("click", () => void changeShelves(true));
 shelfRemoveEl.addEventListener("click", () => void changeShelves(false));
+// Escape steps back out of a game, unless it is cancelling a drag or clearing the search.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || railDrag || !openGame) return;
+  if (event.target === searchEl && searchEl.value) return;
+  closeGameView();
+});
 listen("achievements-updated", () => void load());
 void load();

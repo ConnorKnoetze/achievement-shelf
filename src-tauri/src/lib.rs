@@ -144,6 +144,8 @@ struct PickerData {
     /// Every saved trophy level, top first, including any past `trophy_rows`.
     trophies: Vec<Vec<TrophyKey>>,
     items: Vec<PickerItem>,
+    /// GOG store banner URL templates keyed by [`game_key`], passed back to `get_banner`.
+    gog_covers: HashMap<String, String>,
 }
 
 struct Unlocked {
@@ -349,7 +351,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 /// Every unlocked achievement, newest first, for the trophy picker.
 #[tauri::command]
 async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> {
-    let Unlocked { mut achievements, names, launchers, .. } = load_unlocked().await?;
+    let Unlocked { mut achievements, names, launchers, gog_banners } = load_unlocked().await?;
     resolve_names(&state, names, &achievements.iter().collect::<Vec<_>>()).await;
     state.rarity.fill(&state.client, &mut achievements).await;
     let items = achievements
@@ -365,7 +367,20 @@ async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> 
         can_remove_trophy_row: settings.can_remove_trophy_row(),
         trophies: settings.trophy_levels,
         items,
+        gog_covers: gog_banners,
     })
+}
+
+/// A game's banner as a `data:` URL for the picker's catalog, or `None` when it has none.
+/// `gog_cover` is the template from `PickerData::gog_covers`; `icons` checks its host.
+#[tauri::command]
+async fn get_banner(
+    state: State<'_, AppState>,
+    source: Source,
+    game_id: String,
+    gog_cover: Option<String>,
+) -> Result<Option<String>, String> {
+    Ok(icons::banner_data_url(&state.client, &state.cache_dir, source, &game_id, gog_cover.as_deref()).await)
 }
 
 #[tauri::command]
@@ -1466,6 +1481,7 @@ pub fn run() {
             get_shelf,
             get_unlocked,
             get_icon,
+            get_banner,
             set_trophy,
             move_trophies,
             clear_trophies,

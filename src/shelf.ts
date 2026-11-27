@@ -131,8 +131,10 @@ function certificate(item: ShelfItem): { children: HTMLElement[]; hasBanner: boo
   head.append(iconInsert(item, "cert-icon", ""), heading);
   children.push(head);
   if (item.description) children.push(el("p", "cert-desc", item.description));
-  if (item.platinum) children.push(platinumLabel("grade cert-grade cert-platinum", "Game completed"));
-  children.push(certificateGrade(item));
+  const foot = el("div", "cert-foot");
+  foot.append(certificateGrade(item));
+  if (item.platinum) foot.append(platinumLabel("grade cert-grade cert-platinum"));
+  children.push(foot);
   return { children, hasBanner: Boolean(banner) };
 }
 
@@ -238,7 +240,7 @@ function renderItem(item: ShelfItem, isNew: boolean): HTMLElement {
     // without the pointer moving; that must not count as lifting it again.
     if (!drag) glared = null;
   });
-  // Trophies capture the pointer for dragging, so their clicks are handled in `endDrag`.
+  // Movable slots capture the pointer for dragging, so their clicks are handled in `endDrag`.
   slot.addEventListener("click", () => {
     if (!slot.classList.contains("movable")) togglePin(slot);
   });
@@ -331,8 +333,9 @@ shelvesEl.addEventListener("pointerleave", resetTilt);
 
 /*
  * Trophies are dragged to rearrange them, along a trophy row or onto any other trophy row with
- * room. The pointer is captured on the shelves element, not the slot, because the slot moves
- * between rows while it is dragged. The slot stays in place as a faded placeholder and a copy of
+ * room. Recent achievements can be picked up too, but only to drag them out (see `dragOut`); they
+ * stay in unlock order. The pointer is captured on the shelves element, not the slot, because
+ * the slot moves between rows while it is dragged. The slot stays in place as a faded placeholder and a copy of
  * its slab follows the pointer.
  *
  * The rows are measured once when the drag starts (see `dropPlace`); measuring live would read
@@ -340,6 +343,8 @@ shelvesEl.addEventListener("pointerleave", resetTilt);
  */
 interface Drag {
   slot: HTMLElement;
+  /** Whether the slot is a trophy, which can be rearranged; a recent one can only be dragged out. */
+  trophy: boolean;
   pointerId: number;
   startX: number;
   startY: number;
@@ -466,6 +471,7 @@ function startDrag(event: PointerEvent, slot: HTMLElement) {
   const levels = trophyLevels();
   drag = {
     slot,
+    trophy: trophyOf.has(slot),
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
@@ -499,7 +505,7 @@ function liftSlab(d: Drag, x: number, y: number) {
   d.swing.lastX = x;
   d.swing.lastTime = performance.now();
   d.ghost = ghost;
-  d.share = prepareShare(d.slot, trophyOf.get(d.slot)!);
+  d.share = prepareShare(d.slot, itemOf.get(d.slot)!);
   d.share.catch((err) => console.error("cannot prepare the achievement image:", err));
   d.slot.classList.add("drag-source");
   shelvesEl.classList.add("dragging");
@@ -593,14 +599,12 @@ function forgetShares(keys: string[]) {
 }
 
 /**
- * Lets go of the images of trophies no longer on the shelf, and of ones drawn differently now.
- * Run after each shelf is drawn.
+ * Lets go of the images of achievements no longer on the shelf, and of ones drawn differently
+ * now. Run after each shelf is drawn.
  */
 function pruneShares() {
   const current = new Set(
-    trophyLevels()
-      .flat()
-      .map((slot) => shareKey(trophyOf.get(slot)!)),
+    [...shelvesEl.querySelectorAll<HTMLElement>(".slot")].map((slot) => shareKey(itemOf.get(slot)!)),
   );
   forgetShares([...shares.keys()].filter((key) => !current.has(key)));
 }
@@ -655,18 +659,19 @@ async function renderShare(slot: HTMLElement, item: ShelfItem): Promise<ShareIma
   };
 }
 
-type TrophyKey = Pick<ShelfItem, "source" | "gameId" | "apiName">;
-const sameTrophy = (a: TrophyKey, b: TrophyKey) =>
-  a.source === b.source && a.gameId === b.gameId && a.apiName === b.apiName;
+/** The slot's key in `rendered`. */
+const renderedKey = (item: ShelfItem, trophy: boolean) => `${trophy ? "t" : "r"}:${keyOf(item)}`;
 
-/** The trophy last dragged out, and where it was held, in case it is brought back. */
-let draggedOut: { trophy: TrophyKey; offsetX: number; offsetY: number } | null = null;
+/**
+ * The achievement last dragged out (its key in `rendered`), and where it was held, in case it
+ * is brought back.
+ */
+let draggedOut: { key: string; offsetX: number; offsetY: number } | null = null;
 
-/** Hands the carried trophy to the OS as an image file, leaving its slot faded meanwhile. */
+/** Hands the carried achievement to the OS as an image file, leaving its slot faded meanwhile. */
 async function dragOut(d: Drag) {
-  const item = trophyOf.get(d.slot)!;
   const prepared = d.share!;
-  draggedOut = { trophy: item, offsetX: d.offsetX, offsetY: d.offsetY };
+  draggedOut = { key: renderedKey(itemOf.get(d.slot)!, d.trophy), offsetX: d.offsetX, offsetY: d.offsetY };
   endDrag(false, true);
   try {
     const { id, previewScale } = await prepared;
@@ -677,7 +682,7 @@ async function dragOut(d: Drag) {
     ];
     // The slab carries on swinging off the shelf, from where it had got to.
     const { angle, rate, speed } = d.swing;
-    // Brought back over the shelf, the trophy comes back to be placed (`share-drag-returned`).
+    // Brought back over the shelf, it is carried here again (`share-drag-returned`).
     const { left, top, width, height } = shelvesEl.getBoundingClientRect();
     await invoke("share_drag", {
       shelf: { x: left, y: top, width, height },
@@ -759,7 +764,8 @@ function drawDrag(now: number) {
   // Keeps drawing while the slab swings, after the pointer has stopped too.
   if (!reducedMotion() && stepSwing(d, now)) d.frame = requestAnimationFrame(drawDrag);
   d.ghost.style.transform = ghostTransform(d.pointerX - d.offsetX, d.pointerY - d.offsetY, CARRY_TILT + d.swing.angle);
-  const levels = dropLevels(d, d.pointerX, d.pointerY);
+  // A recent achievement is only carried; it goes back to its own slot when dropped.
+  const levels = d.trophy ? dropLevels(d, d.pointerX, d.pointerY) : d.levels;
   if (levels !== d.levels) {
     d.levels = levels;
     layoutTrophies(levels);
@@ -767,8 +773,8 @@ function drawDrag(now: number) {
 }
 
 /*
- * A trophy dragged out and brought back over the shelf with the button still down comes back
- * to the shelf to be placed, carried on from where it was and swinging as it was. The OS drag
+ * An achievement dragged out and brought back over the shelf with the button still down is
+ * carried here again, from where it was and swinging as it was; a trophy can then be placed. The OS drag
  * gave no pointer events, so the drag takes on the mouse's pointer at its first event.
  */
 const MOUSE_UNKNOWN = -1;
@@ -779,13 +785,12 @@ listen<{ x: number; y: number; swing: { angle: number; rate: number; speed: numb
     const out = draggedOut;
     draggedOut = null;
     if (!out || drag) return;
-    const slot = trophyLevels()
-      .flat()
-      .find((s) => sameTrophy(trophyOf.get(s)!, out.trophy));
-    if (!slot) return;
+    const slot = rendered.get(out.key)?.slot;
+    if (!slot?.isConnected) return;
     const levels = trophyLevels();
     const d: Drag = {
       slot,
+      trophy: trophyOf.has(slot),
       pointerId: MOUSE_UNKNOWN,
       startX: x,
       startY: y,
@@ -841,10 +846,11 @@ shelvesEl.addEventListener("pointerup", (event) => {
 shelvesEl.addEventListener("pointercancel", () => endDrag(false));
 shelvesEl.addEventListener("lostpointercapture", () => endDrag(false));
 
-function renderTrophy(item: ShelfItem): HTMLElement {
-  const slot = renderItem(item, false);
+/** A slot that can be picked up: a trophy, or a recent achievement (`trophy` false). */
+function renderMovable(item: ShelfItem, isNew: boolean, trophy: boolean): HTMLElement {
+  const slot = renderItem(item, isNew);
   slot.classList.add("movable");
-  trophyOf.set(slot, item);
+  if (trophy) trophyOf.set(slot, item);
   slot.addEventListener("pointerdown", (event) => startDrag(event, slot));
   return slot;
 }
@@ -1003,7 +1009,7 @@ function renderShelf(shelf: Shelf) {
       content:
         r === 0 && noTrophies
           ? "Pick your trophies from the tray menu"
-          : level.map((item) => slotFor(next, `t:${keyOf(item)}`, item, () => renderTrophy(item))),
+          : level.map((item) => slotFor(next, renderedKey(item, true), item, () => renderMovable(item, false, true))),
     });
   }
   if (shelf.rows > 0 && shelf.items.length === 0) {
@@ -1016,7 +1022,9 @@ function renderShelf(shelf: Shelf) {
       rows.push({
         trophy: false,
         label: r === 0 ? "Recent" : undefined,
-        content: slice.map((item) => slotFor(next, `r:${keyOf(item)}`, item, () => renderItem(item, isNew(item)))),
+        content: slice.map((item) =>
+          slotFor(next, renderedKey(item, false), item, () => renderMovable(item, isNew(item), false)),
+        ),
       });
     }
   }
