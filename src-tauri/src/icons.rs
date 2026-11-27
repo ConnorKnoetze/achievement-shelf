@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 
 use crate::achievement::Source;
+use crate::ubisoft::{self, UbisoftPaths};
 use crate::steam;
 
 /// Steam serves achievement icons from these hosts. Newer icons exist only on the first.
@@ -68,6 +69,11 @@ fn is_safe_file_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
 }
 
+/// [`is_safe_file_name`], also allowing `-`, which EA and Ubisoft image names use.
+fn is_safe_image_name(name: &str) -> bool {
+    is_safe_file_name(&name.replace('-', "_"))
+}
+
 /// Where the icon is cached and the URLs to try, or `None` if the values are unsafe.
 /// They come from launcher files; refuse anything that could escape the cache folder.
 fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option<(PathBuf, Vec<String>)> {
@@ -95,7 +101,38 @@ fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option
             let urls = vec![format!("{GOG_IMAGE_HOST}{full}"), icon.to_string()];
             Some((icons.join("gog").join(full), urls))
         }
+        // Read from the game's archive instead; see `ubisoft_icon`.
+        Source::Ubisoft => None,
     }
+}
+
+/// A Ubisoft icon, taken out of the game's local achievement archive once and then cached.
+async fn ubisoft_icon(cache_dir: &Path, game_id: &str, icon: &str) -> Option<String> {
+    let product: u64 = game_id.parse().ok()?;
+    if !is_safe_file_name(icon) {
+        return None;
+    }
+    let path = cache_dir.join("icons").join("ubisoft").join(product.to_string()).join(icon);
+    if let Some(url) = remembered(&path) {
+        return url;
+    }
+    let bytes = match tokio_read(&path).await {
+        Some(bytes) => Some(bytes),
+        None => {
+            let entry = icon.to_string();
+            let bytes = tauri::async_runtime::spawn_blocking(move || UbisoftPaths::locate().ok()?.icon(product, &entry))
+                .await
+                .ok()
+                .flatten();
+            if let Some(bytes) = &bytes {
+                store(&path, bytes, &format!("icon {icon} for ubisoft game {game_id}"));
+            }
+            bytes
+        }
+    };
+    let url = bytes.map(|bytes| data_url(&bytes));
+    remember(path, &url);
+    url
 }
 
 /// Returns the icon as a `data:` URL, or `None` if it is not cached and cannot be downloaded.
@@ -106,6 +143,9 @@ pub async fn icon_data_url(
     game_id: &str,
     icon: &str,
 ) -> Option<String> {
+    if source == Source::Ubisoft {
+        return ubisoft_icon(cache_dir, game_id, icon).await;
+    }
     let (path, urls) = locate(cache_dir, source, game_id, icon)?;
     if let Some(url) = remembered(&path) {
         return url;
@@ -116,8 +156,9 @@ pub async fn icon_data_url(
 }
 
 /// Where the game's banner is cached and the URLs to try, or `None` if there is none or the
-/// values are unsafe. Steam banners come from the app id; GOG ones from the store's
-/// `horizontalCover` URL template, which holds a `{formatter}` placeholder for the size.
+/// values are unsafe. Steam banners come from the app id. `cover` is what the launcher's own
+/// files name: for GOG the store's `horizontalCover` URL template, which holds a `{formatter}`
+/// placeholder for the size; for Ubisoft the store background's URL.
 fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<&str>) -> Option<(PathBuf, Vec<String>)> {
     let banners = cache_dir.join("banners");
     match source {
@@ -133,6 +174,11 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<
             }
             let urls = GOG_BANNER_FORMATS.iter().map(|f| format!("{GOG_STORE_IMAGE_HOST}{id}{f}")).collect();
             Some((banners.join("gog").join(format!("{id}{}", GOG_BANNER_FORMATS[0])), urls))
+        }
+        Source::Ubisoft => {
+            let cover = cover?;
+            let file = cover.strip_prefix(ubisoft::ASSET_HOST)?;
+            is_safe_image_name(file).then(|| (banners.join("ubisoft").join(file), vec![cover.to_string()]))
         }
     }
 }
@@ -290,6 +336,8 @@ mod tests {
         assert!(locate(cache, Source::Gog, "gog_1", "https://evil.example/abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/../abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/a/b.jpg").is_none());
+
+        assert!(locate(cache, Source::Ubisoft, "1", "1.png").is_none(), "read from the archive instead");
     }
 
     #[test]
@@ -334,6 +382,12 @@ mod tests {
             ]
         );
         assert!(locate_banner(cache, Source::Gog, "gog_1", None).is_none());
+        let ubi = "https://static3.cdn.ubi.com/orbit/uplay_launcher_3_0/assets/ab12-cd.jpg";
+        let (path, urls) = locate_banner(cache, Source::Ubisoft, "635", Some(ubi)).unwrap();
+        assert_eq!(path, cache.join("banners").join("ubisoft").join("ab12-cd.jpg"));
+        assert_eq!(urls, [ubi]);
+        assert!(locate_banner(cache, Source::Ubisoft, "635", Some("https://evil.example/ab.jpg")).is_none());
+        assert!(locate_banner(cache, Source::Ubisoft, "635", None).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://evil.example/5a51d9_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/../x_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/5a51d9.png")).is_none());

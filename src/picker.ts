@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { dropPlace, findPlace, moveTo, type LevelGeometry, type Place } from "./levels";
 import { gradeLabel, platinumLabel, rarityTier } from "./rarity";
 
-type Source = "steam" | "gog";
+type Source = "steam" | "gog" | "ubisoft";
 type Launcher = Source | "all";
 type View = "games" | "achievements";
 type Sort = "newest" | "rarest" | "platinum";
@@ -66,10 +66,12 @@ interface Game {
   matches: PickerItem[];
 }
 
-const LAUNCHERS: { value: Launcher; label: string; missing?: string }[] = [
+/** `optional` launchers are only offered when they are on this PC (or already chosen). */
+const LAUNCHERS: { value: Launcher; label: string; missing?: string; optional?: boolean }[] = [
   { value: "all", label: "All" },
   { value: "steam", label: "Steam", missing: "Steam was not found on this PC." },
   { value: "gog", label: "GOG", missing: "GOG Galaxy was not found on this PC." },
+  { value: "ubisoft", label: "Ubisoft", missing: "Ubisoft Connect was not found on this PC.", optional: true },
 ];
 
 function sourceLabel(source: Source): string {
@@ -842,7 +844,9 @@ function renderControls() {
   }
   const games = (source: Launcher) => new Set((source === "all" ? items : items.filter((i) => i.source === source)).map(gameKeyOf)).size;
   launchersEl.replaceChildren(
-    ...LAUNCHERS.map(({ value, label }) => {
+    ...LAUNCHERS.filter(
+      ({ value, optional }) => !optional || value === launcher || launchers.includes(value as Source),
+    ).map(({ value, label }) => {
       const button = el("button", "");
       button.type = "button";
       button.setAttribute("aria-pressed", String(value === launcher));
@@ -911,7 +915,7 @@ function launcherEmpty(): string | null {
   if (launcherItems().length) return null;
   const entry = LAUNCHERS.find((l) => l.value === launcher);
   if (entry?.missing && !launchers.includes(entry.value as Source)) return entry.missing;
-  if (launcher === "all" && launchers.length === 0) return "Neither Steam nor GOG Galaxy was found on this PC.";
+  if (launcher === "all" && launchers.length === 0) return "No supported launcher was found on this PC.";
   return "No unlocked achievements found yet. New unlocks show up here as they happen.";
 }
 

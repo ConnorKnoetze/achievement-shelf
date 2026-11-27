@@ -1,6 +1,7 @@
 pub mod achievement;
 pub mod gog;
 pub mod steam;
+pub mod ubisoft;
 
 mod icons;
 mod rarity;
@@ -26,6 +27,7 @@ use gog::GogPaths;
 use rarity::RarityCache;
 use settings::{Settings, Theme, TrophyKey, MAX_LEVELS, MAX_PER_ROW, MAX_SCALE, MIN_PER_ROW, MIN_SCALE};
 use steam::SteamPaths;
+use ubisoft::UbisoftPaths;
 
 // Shelf layout in CSS pixels; must match the sizes in src/shelf.css.
 /// Width of a shelf without its achievements: padding and the rail's ends.
@@ -189,8 +191,14 @@ async fn load_unlocked() -> Result<Unlocked, String> {
                 Err(e) => eprintln!("achievement-shelf: cannot read GOG game banners: {e}"),
             }
         }
+        if let Ok(ubisoft) = UbisoftPaths::locate() {
+            unlocked.launchers.push(Source::Ubisoft);
+            unlocked.achievements.extend(ubisoft.load_all());
+            unlocked.names.extend(ubisoft.names());
+            unlocked.covers.extend(ubisoft.banners());
+        }
         if unlocked.launchers.is_empty() {
-            return Err("No Steam or GOG Galaxy installation found".to_string());
+            return Err("No supported launcher found".to_string());
         }
         unlocked.achievements.sort_by(|a, b| b.unlocked_at.cmp(&a.unlocked_at));
         Ok(unlocked)
@@ -261,6 +269,7 @@ fn game_name(state: &AppState, achievement: &Achievement) -> String {
     known.unwrap_or_else(|| match achievement.source {
         Source::Steam => format!("App {}", achievement.game_id),
         Source::Gog => format!("GOG game {}", achievement.game_id),
+        Source::Ubisoft => format!("Ubisoft game {}", achievement.game_id),
     })
 }
 
@@ -1168,7 +1177,7 @@ fn build_tray(app: &AppHandle, settings: &Settings) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Folders to watch for new unlocks, one per installed launcher.
+/// Folders to watch for new unlocks, one or more per installed launcher.
 fn watch_targets() -> Vec<watch::Target> {
     let mut targets = Vec::new();
     match SteamPaths::locate() {
@@ -1193,6 +1202,16 @@ fn watch_targets() -> Vec<watch::Target> {
             });
         }
         Err(e) => eprintln!("achievement-shelf: {e}"),
+    }
+    if let Ok(ubisoft) = UbisoftPaths::locate() {
+        // The launcher appends a record to `<product>.spool` the moment an achievement unlocks.
+        for dir in ubisoft.spool_dirs() {
+            targets.push(watch::Target {
+                dir,
+                relevant: |name| name.to_ascii_lowercase().ends_with(".spool"),
+                changed: Box::new(|| true),
+            });
+        }
     }
     targets
 }

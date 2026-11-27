@@ -13,6 +13,7 @@ pub enum Source {
     #[default]
     Steam,
     Gog,
+    Ubisoft,
 }
 
 impl fmt::Display for Source {
@@ -20,6 +21,7 @@ impl fmt::Display for Source {
         f.write_str(match self {
             Source::Steam => "steam",
             Source::Gog => "gog",
+            Source::Ubisoft => "ubisoft",
         })
     }
 }
@@ -33,13 +35,14 @@ pub fn game_key(source: Source, game_id: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct Achievement {
     pub source: Source,
-    /// Steam app ID, or GOG release key such as `gog_1423049311`.
+    /// Steam app ID, GOG release key such as `gog_1423049311`, or Ubisoft product ID.
     pub game_id: String,
     pub api_name: String,
     pub title: String,
     pub description: String,
     pub hidden: bool,
-    /// Steam: icon file name on the community CDN. GOG: full image URL.
+    /// Steam: icon file name on the community CDN. GOG: full image
+    /// URL. Ubisoft: the icon's file name inside the game's achievement archive.
     pub icon: String,
     pub unlocked_at: u32,
     /// Percentage of players who unlocked it, when the launcher knows.

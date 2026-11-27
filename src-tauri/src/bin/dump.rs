@@ -1,12 +1,14 @@
 //! Debugging tool: prints unlocked achievements read from the local launcher files.
 //! Usage: `cargo run --bin dump [appid]` (no app ID = the 20 most recent Steam unlocks
-//! across all games), or `cargo run --bin dump -- --gog` for every GOG Galaxy unlock.
+//! across all games), or `cargo run --bin dump -- --gog`, or `--ubisoft` for every GOG
+//! Galaxy or Ubisoft Connect unlock.
 
 use std::collections::HashMap;
 
 use achievement_shelf_lib::achievement::Achievement;
 use achievement_shelf_lib::gog::GogPaths;
 use achievement_shelf_lib::steam::{stats, SteamPaths};
+use achievement_shelf_lib::ubisoft::UbisoftPaths;
 
 /// Global unlock percentage from local files only (the app fills Steam gaps from the Web API).
 fn rarity(a: &Achievement) -> String {
@@ -28,7 +30,13 @@ fn print_all(list: &[Achievement], names: &HashMap<String, String>) {
 
 fn main() -> Result<(), String> {
     let arg = std::env::args().nth(1);
-    let achievements = if arg.as_deref() == Some("--gog") {
+    let achievements = if arg.as_deref() == Some("--ubisoft") {
+        let ubisoft = UbisoftPaths::locate()?;
+        println!("Ubisoft Connect: {}", ubisoft.spool.display());
+        let list = ubisoft.load_all();
+        print_all(&list, &ubisoft.names());
+        list
+    } else if arg.as_deref() == Some("--gog") {
         let gog = GogPaths::locate()?;
         println!("GOG Galaxy: {}", gog.db.display());
         let list = gog.load_all()?;
