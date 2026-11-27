@@ -20,6 +20,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 base64 = "0.22"
 rusqlite = { version = "0.42.0", features = ["bundled"] }
 tauri-plugin-updater = "2"
+sha2 = "0.10"
+getrandom = "0.3"
 zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
@@ -43,3 +45,15 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-core = "0.62"
+
+# Image decoding and resizing (Xbox icons, src/icons.rs) is ~30x slower unoptimised, so dev
+# builds optimise those crates too.
+[profile.dev.package]
+image = { opt-level = 3 }
+png = { opt-level = 3 }
+fdeflate = { opt-level = 3 }
+zune-jpeg = { opt-level = 3 }
+zune-core = { opt-level = 3 }
+crc32fast = { opt-level = 3 }
+simd-adler32 = { opt-level = 3 }
+miniz_oxide = { opt-level = 3 }

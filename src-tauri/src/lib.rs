@@ -4,6 +4,7 @@ pub mod gog;
 pub mod retro;
 pub mod steam;
 pub mod ubisoft;
+pub mod xbox;
 
 mod accounts;
 mod browser;
@@ -36,6 +37,7 @@ use retro::Retro;
 use settings::{Settings, Theme, TrophyKey, MAX_LEVELS, MAX_PER_ROW, MAX_SCALE, MIN_PER_ROW, MIN_SCALE};
 use steam::SteamPaths;
 use ubisoft::UbisoftPaths;
+use xbox::Xbox;
 
 // Shelf layout in CSS pixels; must match the sizes in src/shelf.css.
 /// Width of a shelf without its achievements: padding and the rail's ends.
@@ -92,6 +94,8 @@ struct AppState {
     shares: Mutex<HashMap<String, PreparedShare>>,
     /// Wakes the thread that syncs RetroAchievements.
     retro: retro::Waker,
+    /// Wakes the thread that syncs Xbox.
+    xbox: xbox::Waker,
 }
 
 impl AppState {
@@ -220,6 +224,12 @@ async fn load_unlocked(data_dir: PathBuf) -> Result<Unlocked, String> {
             unlocked.names.extend(retro.names());
             unlocked.covers.extend(retro.banners());
         }
+        if let Some(xbox) = Xbox::locate(&data_dir) {
+            unlocked.launchers.push(Source::Xbox);
+            unlocked.achievements.extend(xbox.load_all());
+            unlocked.names.extend(xbox.names());
+            unlocked.covers.extend(xbox.banners());
+        }
         if unlocked.launchers.is_empty() {
             return Err("No supported launcher found".to_string());
         }
@@ -295,6 +305,7 @@ fn game_name(state: &AppState, achievement: &Achievement) -> String {
         Source::Ubisoft => format!("Ubisoft game {}", achievement.game_id),
         Source::Ea => format!("EA game {}", achievement.game_id),
         Source::Retro => format!("RetroAchievements game {}", achievement.game_id),
+        Source::Xbox => format!("Xbox game {}", achievement.game_id),
     })
 }
 
@@ -1155,6 +1166,39 @@ fn retro_disconnect(app: AppHandle, state: State<'_, AppState>) {
     let _ = app.emit(watch::UPDATED_EVENT, ());
 }
 
+#[derive(Serialize)]
+struct XboxAccountView {
+    /// Whether this build can sign in to Xbox at all.
+    available: bool,
+    gamertag: Option<String>,
+}
+
+#[tauri::command]
+async fn xbox_account() -> XboxAccountView {
+    let gamertag = tauri::async_runtime::spawn_blocking(xbox::gamertag).await.ok().flatten();
+    XboxAccountView { available: xbox::available(), gamertag }
+}
+
+/// Signs in to Xbox in the user's browser and starts syncing; returns the gamertag.
+#[tauri::command]
+async fn xbox_connect(state: State<'_, AppState>) -> Result<String, String> {
+    let gamertag = xbox::connect(&state.client, &state.data_dir).await?;
+    state.xbox.sync_now();
+    Ok(gamertag)
+}
+
+/// Stops a sign-in that is waiting for the browser.
+#[tauri::command]
+fn xbox_cancel() {
+    xbox::cancel_sign_in();
+}
+
+#[tauri::command]
+fn xbox_disconnect(app: AppHandle, state: State<'_, AppState>) {
+    xbox::disconnect(&state.data_dir);
+    let _ = app.emit(watch::UPDATED_EVENT, ());
+}
+
 #[tauri::command]
 fn set_start_with_windows(app: AppHandle, value: bool) -> Result<SettingsView, String> {
     set_autostart(&app, value)?;
@@ -1166,6 +1210,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "refresh" => {
             icons::forget_misses();
             app.state::<AppState>().retro.sync_now();
+            app.state::<AppState>().xbox.sync_now();
             let _ = app.emit(watch::UPDATED_EVENT, ());
         }
         "choose_trophies" => {
@@ -1533,6 +1578,10 @@ pub fn run() {
             let retro = retro::spawn(client.clone(), data_dir.clone(), move || {
                 let _ = handle.emit(watch::UPDATED_EVENT, ());
             });
+            let handle = app.handle().clone();
+            let xbox = xbox::spawn(client.clone(), data_dir.clone(), move || {
+                let _ = handle.emit(watch::UPDATED_EVENT, ());
+            });
             let hit_rect = Arc::new(Mutex::new(None));
 
             // Managed before the window is shown so early front-end calls find the state.
@@ -1548,6 +1597,7 @@ pub fn run() {
                 hit_rect: hit_rect.clone(),
                 shares: Mutex::default(),
                 retro,
+                xbox,
             });
             apply_theme(app.handle(), settings.theme);
             let window = app.get_webview_window("main").expect("main window is defined in tauri.conf.json");
@@ -1597,7 +1647,11 @@ pub fn run() {
             retro_account,
             retro_connect,
             retro_open_key_page,
-            retro_disconnect
+            retro_disconnect,
+            xbox_account,
+            xbox_connect,
+            xbox_cancel,
+            xbox_disconnect
         ])
         .run(tauri::generate_context!())
         .expect("error while running Achievement Shelf");

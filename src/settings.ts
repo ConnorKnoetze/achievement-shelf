@@ -60,6 +60,12 @@ const retroUsernameEl = byId<HTMLInputElement>("retro-username");
 const retroKeyEl = byId<HTMLInputElement>("retro-key");
 const retroConnectEl = byId<HTMLButtonElement>("retro-connect");
 const retroKeyPageEl = byId<HTMLButtonElement>("retro-key-page");
+const xboxSignedInEl = byId<HTMLDivElement>("xbox-signed-in");
+const xboxUserEl = byId<HTMLSpanElement>("xbox-user");
+const xboxDisconnectEl = byId<HTMLButtonElement>("xbox-disconnect");
+const xboxSignedOutEl = byId<HTMLDivElement>("xbox-signed-out");
+const xboxHintEl = byId<HTMLSpanElement>("xbox-hint");
+const xboxConnectEl = byId<HTMLButtonElement>("xbox-connect");
 
 /** Levels drawn last time, so an added level can drop into place. */
 let drawn: { trophy: number; recent: number; perRow: number } | null = null;
@@ -267,6 +273,42 @@ retroDisconnectEl.addEventListener("click", async () => {
 invoke<string | null>("retro_account")
   .then(showRetro)
   .catch(() => showRetro(null));
+
+/** Shows the Xbox account, or the button to sign in. Builds that can't sign in show neither. */
+function showXbox(available: boolean, gamertag: string | null) {
+  xboxSignedInEl.hidden = !available || !gamertag;
+  xboxSignedOutEl.hidden = !available || !!gamertag;
+  xboxUserEl.textContent = gamertag ?? "";
+}
+
+const XBOX_HINT = xboxHintEl.textContent ?? "";
+/** Whether a sign-in is waiting for the browser; the button then cancels it. */
+let xboxWaiting = false;
+xboxConnectEl.addEventListener("click", async () => {
+  if (xboxWaiting) {
+    void invoke("xbox_cancel");
+    return;
+  }
+  xboxWaiting = true;
+  xboxConnectEl.textContent = "Cancel";
+  xboxHintEl.textContent = "Finish signing in in your browser.";
+  try {
+    showXbox(true, await invoke<string>("xbox_connect"));
+  } catch (err) {
+    if (String(err) !== "Sign-in cancelled.") showStatus(String(err));
+  } finally {
+    xboxWaiting = false;
+    xboxConnectEl.textContent = "Sign in";
+    xboxHintEl.textContent = XBOX_HINT;
+  }
+});
+xboxDisconnectEl.addEventListener("click", async () => {
+  await invoke("xbox_disconnect").catch((err) => showStatus(String(err)));
+  showXbox(true, null);
+});
+invoke<{ available: boolean; gamertag: string | null }>("xbox_account")
+  .then((account) => showXbox(account.available, account.gamertag))
+  .catch(() => showXbox(false, null));
 
 // Changes made from the tray menu.
 listen<SettingsView>("settings-changed", (event) => render(event.payload));

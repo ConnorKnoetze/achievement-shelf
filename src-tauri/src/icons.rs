@@ -10,7 +10,7 @@ use base64::Engine;
 
 use crate::achievement::Source;
 use crate::ubisoft::{self, UbisoftPaths};
-use crate::{ea, retro, steam};
+use crate::{ea, retro, steam, xbox};
 
 /// Steam serves achievement icons from these hosts. Newer icons exist only on the first.
 const STEAM_CDNS: [&str; 2] = [
@@ -35,6 +35,11 @@ const GOG_STORE_IMAGE_HOST: &str = "https://images.gog-statics.com/";
 /// Fill the `{formatter}` of a GOG `horizontalCover` template, best first: a 1020x574 JPEG,
 /// then the 432x243 tile.
 const GOG_BANNER_FORMATS: [&str; 2] = ["_ggvgm_2x.jpg", "_product_tile_extended_432x243.jpg"];
+
+/// Xbox achievement art is 1920x1080, often several megabytes, and its image service won't
+/// resize it. It's cut to a centred square this many pixels wide before caching, enough for the
+/// largest shelf on a high-DPI screen.
+const XBOX_ICON_SIZE: u32 = 256;
 
 /// How long an image that could not be found is left before it is looked for again.
 const MISS_RETRY: Duration = Duration::from_secs(10 * 60);
@@ -109,9 +114,19 @@ fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option
             let file = icon.strip_prefix(retro::MEDIA_HOST)?.strip_prefix("Badge/")?;
             is_safe_image_name(file).then(|| (icons.join("retro").join(file), vec![icon.to_string()]))
         }
+        Source::Xbox => xbox::is_image_url(icon).then(|| hashed_image(&icons, "xbox", icon)),
         // Read from the game's archive instead; see `ubisoft_icon`.
         Source::Ubisoft => None,
     }
+}
+
+/// Where an image is cached when its URL doesn't name a usable file (Xbox puts it in a query
+/// string): under `dir/source`, named by a hash of the
+/// URL. The URL must already be checked against the source's hosts.
+fn hashed_image(dir: &Path, source: &str, url: &str) -> (PathBuf, Vec<String>) {
+    use sha2::{Digest, Sha256};
+    let hash: String = Sha256::digest(url.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    (dir.join(source).join(format!("{hash}.png")), vec![url.to_string()])
 }
 
 /// A Ubisoft icon, taken out of the game's local achievement archive once and then cached.
@@ -158,7 +173,8 @@ pub async fn icon_data_url(
     if let Some(url) = remembered(&path) {
         return url;
     }
-    let url = cached_data_url(client, &path, &urls, &format!("icon {icon} for {source} game {game_id}")).await;
+    let square = (source == Source::Xbox).then_some(XBOX_ICON_SIZE);
+    let url = cached_data_url(client, &path, &urls, square, &format!("icon {icon} for {source} game {game_id}")).await;
     remember(path, &url);
     url
 }
@@ -193,6 +209,7 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<
             let file = cover.strip_prefix(retro::MEDIA_HOST)?.strip_prefix("Images/")?;
             is_safe_image_name(file).then(|| (banners.join("retro").join(file), vec![cover.to_string()]))
         }
+        Source::Xbox => cover.filter(|c| xbox::is_image_url(c)).map(|c| hashed_image(&banners, "xbox", c)),
         Source::Ea => None,
     }
 }
@@ -274,8 +291,9 @@ fn is_steam_header_url(app_id: u32, url: &str) -> bool {
 }
 
 /// Reads `path` from the disk cache, or downloads it from the first of `urls` that works and
-/// caches it, and returns it as a `data:` URL. `what` names the image in log messages.
-async fn cached_data_url(client: &reqwest::Client, path: &Path, urls: &[String], what: &str) -> Option<String> {
+/// caches it, and returns it as a `data:` URL. With `square`, a download is first cut to a
+/// centred square that many pixels wide. `what` names the image in log messages.
+async fn cached_data_url(client: &reqwest::Client, path: &Path, urls: &[String], square: Option<u32>, what: &str) -> Option<String> {
     let bytes = match tokio_read(path).await {
         Some(bytes) => bytes,
         None => {
@@ -283,11 +301,31 @@ async fn cached_data_url(client: &reqwest::Client, path: &Path, urls: &[String],
                 eprintln!("achievement-shelf: {what} not found");
                 return None;
             };
+            let bytes = match square {
+                Some(size) => tauri::async_runtime::spawn_blocking(move || square_thumbnail(&bytes, size).unwrap_or(bytes)).await.ok()?,
+                None => bytes,
+            };
             store(path, &bytes, what);
             bytes
         }
     };
     Some(data_url(&bytes))
+}
+
+/// The centre square of an image, scaled to `size` pixels wide, as a PNG. `None` if it can't
+/// be decoded.
+fn square_thumbnail(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    let side = image.width().min(image.height());
+    let (x, y) = ((image.width() - side) / 2, (image.height() - side) / 2);
+    let mut square = image.crop_imm(x, y, side, side);
+    if side > size {
+        // Averages pixels in one pass; a fraction of the cost of a Lanczos resize at this ratio.
+        square = square.thumbnail_exact(size, size);
+    }
+    let mut png = std::io::Cursor::new(Vec::new());
+    square.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    Some(png.into_inner())
 }
 
 /// Writes a downloaded image to the disk cache; failures are logged, not fatal.
@@ -365,6 +403,18 @@ mod tests {
         assert_eq!(urls, [badge]);
         assert!(locate(cache, Source::Retro, "1", "https://media.retroachievements.org/Images/1.png").is_none());
         assert!(locate(cache, Source::Retro, "1", "https://evil.example/Badge/1.png").is_none());
+    }
+
+    #[test]
+    fn cuts_wide_art_to_a_small_centred_square() {
+        // 40x20: red down the sides, green in the middle 20x20.
+        let wide = image::RgbImage::from_fn(40, 20, |x, _| if (10..30).contains(&x) { image::Rgb([0, 255, 0]) } else { image::Rgb([255, 0, 0]) });
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(wide).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let thumb = image::load_from_memory(&square_thumbnail(png.get_ref(), 8).unwrap()).unwrap().to_rgb8();
+        assert_eq!(thumb.dimensions(), (8, 8));
+        assert!(thumb.pixels().all(|p| p[1] > 200 && p[0] < 50), "only the green centre is kept");
+        assert!(square_thumbnail(b"not an image", 8).is_none());
     }
 
     #[test]
