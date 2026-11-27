@@ -309,21 +309,29 @@ fn game_name(state: &AppState, achievement: &Achievement) -> String {
     })
 }
 
+/// Icons fetched at once when building the shelf; most are already cached, but a first load
+/// downloads them all.
+const ICON_FETCHES: usize = 8;
+
 async fn shelf_items(state: &AppState, achievements: Vec<Achievement>) -> Vec<ShelfItem> {
-    let mut items = Vec::with_capacity(achievements.len());
-    for achievement in achievements {
-        let icon_url = icons::icon_data_url(
-            &state.client,
-            &state.cache_dir,
-            achievement.source,
-            &achievement.game_id,
-            &achievement.icon,
-        )
-        .await;
-        let game_name = game_name(state, &achievement);
-        items.push(ShelfItem { achievement, game_name, icon_url });
-    }
-    items
+    use futures_util::stream::{self, StreamExt};
+    stream::iter(achievements)
+        .map(|achievement| async move {
+            let icon_url = icons::icon_data_url(
+                &state.client,
+                &state.cache_dir,
+                achievement.source,
+                &achievement.game_id,
+                &achievement.icon,
+            )
+            .await;
+            let game_name = game_name(state, &achievement);
+            ShelfItem { achievement, game_name, icon_url }
+        })
+        // `buffered` keeps the original order.
+        .buffered(ICON_FETCHES)
+        .collect()
+        .await
 }
 
 /// Banners of every game in `achievements`, fetched once per game.

@@ -24,6 +24,7 @@ sha2 = "0.10"
 getrandom = "0.3"
 zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
