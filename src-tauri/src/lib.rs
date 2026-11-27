@@ -144,8 +144,9 @@ struct PickerData {
     /// Every saved trophy level, top first, including any past `trophy_rows`.
     trophies: Vec<Vec<TrophyKey>>,
     items: Vec<PickerItem>,
-    /// GOG store banner URL templates keyed by [`game_key`], passed back to `get_banner`.
-    gog_covers: HashMap<String, String>,
+    /// Banner URLs (templates, for GOG) from the launchers' files, keyed by [`game_key`],
+    /// passed back to `get_banner`.
+    covers: HashMap<String, String>,
 }
 
 struct Unlocked {
@@ -153,8 +154,8 @@ struct Unlocked {
     achievements: Vec<Achievement>,
     /// Game names the launchers know locally, keyed by [`game_key`].
     names: HashMap<String, String>,
-    /// GOG store banner URL templates, keyed by [`game_key`].
-    gog_banners: HashMap<String, String>,
+    /// Banner URLs (templates, for GOG) the launchers' files name, keyed by [`game_key`].
+    covers: HashMap<String, String>,
     launchers: Vec<Source>,
 }
 
@@ -164,7 +165,7 @@ async fn load_unlocked() -> Result<Unlocked, String> {
         let mut unlocked = Unlocked {
             achievements: Vec::new(),
             names: HashMap::new(),
-            gog_banners: HashMap::new(),
+            covers: HashMap::new(),
             launchers: Vec::new(),
         };
         if let Ok(paths) = SteamPaths::locate() {
@@ -184,7 +185,7 @@ async fn load_unlocked() -> Result<Unlocked, String> {
                 Err(e) => eprintln!("achievement-shelf: cannot read GOG game names: {e}"),
             }
             match gog.banners() {
-                Ok(banners) => unlocked.gog_banners = banners,
+                Ok(banners) => unlocked.covers.extend(banners),
                 Err(e) => eprintln!("achievement-shelf: cannot read GOG game banners: {e}"),
             }
         }
@@ -283,7 +284,7 @@ async fn shelf_items(state: &AppState, achievements: Vec<Achievement>) -> Vec<Sh
 /// Banners of every game in `achievements`, fetched once per game.
 async fn banners(
     state: &AppState,
-    gog_banners: &HashMap<String, String>,
+    covers: &HashMap<String, String>,
     achievements: &[&Achievement],
 ) -> HashMap<String, String> {
     let mut banners = HashMap::new();
@@ -292,9 +293,9 @@ async fn banners(
         if banners.contains_key(&key) {
             continue;
         }
-        let gog_cover = gog_banners.get(&key).map(String::as_str);
+        let cover = covers.get(&key).map(String::as_str);
         if let Some(url) =
-            icons::banner_data_url(&state.client, &state.cache_dir, achievement.source, &achievement.game_id, gog_cover)
+            icons::banner_data_url(&state.client, &state.cache_dir, achievement.source, &achievement.game_id, cover)
                 .await
         {
             banners.insert(key, url);
@@ -317,7 +318,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
         )
     };
 
-    let Unlocked { achievements: mut recent, names, gog_banners, .. } = load_unlocked().await?;
+    let Unlocked { achievements: mut recent, names, covers, .. } = load_unlocked().await?;
     // Each level keeps the trophies and order the user chose. Ones no longer found on disk are
     // skipped, and ones past what a level holds are not shown.
     let found: Vec<Vec<Achievement>> = trophy_levels
@@ -332,7 +333,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 
     let shown: Vec<&Achievement> = recent.iter().chain(&trophies).collect();
     resolve_names(&state, names, &shown).await;
-    let banners = banners(&state, &gog_banners, &shown).await;
+    let banners = banners(&state, &covers, &shown).await;
     state.rarity.fill(&state.client, &mut recent).await;
     state.rarity.fill(&state.client, &mut trophies).await;
     let mut trophies = shelf_items(&state, trophies).await.into_iter();
@@ -351,7 +352,7 @@ async fn get_shelf(state: State<'_, AppState>) -> Result<Shelf, String> {
 /// Every unlocked achievement, newest first, for the trophy picker.
 #[tauri::command]
 async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> {
-    let Unlocked { mut achievements, names, launchers, gog_banners } = load_unlocked().await?;
+    let Unlocked { mut achievements, names, launchers, covers } = load_unlocked().await?;
     resolve_names(&state, names, &achievements.iter().collect::<Vec<_>>()).await;
     state.rarity.fill(&state.client, &mut achievements).await;
     let items = achievements
@@ -367,20 +368,20 @@ async fn get_unlocked(state: State<'_, AppState>) -> Result<PickerData, String> 
         can_remove_trophy_row: settings.can_remove_trophy_row(),
         trophies: settings.trophy_levels,
         items,
-        gog_covers: gog_banners,
+        covers,
     })
 }
 
 /// A game's banner as a `data:` URL for the picker's catalog, or `None` when it has none.
-/// `gog_cover` is the template from `PickerData::gog_covers`; `icons` checks its host.
+/// `cover` is the URL (template, for GOG) from `PickerData::covers`; `icons` checks its host.
 #[tauri::command]
 async fn get_banner(
     state: State<'_, AppState>,
     source: Source,
     game_id: String,
-    gog_cover: Option<String>,
+    cover: Option<String>,
 ) -> Result<Option<String>, String> {
-    Ok(icons::banner_data_url(&state.client, &state.cache_dir, source, &game_id, gog_cover.as_deref()).await)
+    Ok(icons::banner_data_url(&state.client, &state.cache_dir, source, &game_id, cover.as_deref()).await)
 }
 
 #[tauri::command]

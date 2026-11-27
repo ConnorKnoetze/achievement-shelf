@@ -2,6 +2,8 @@
 //! Usage: `cargo run --bin dump [appid]` (no app ID = the 20 most recent Steam unlocks
 //! across all games), or `cargo run --bin dump -- --gog` for every GOG Galaxy unlock.
 
+use std::collections::HashMap;
+
 use achievement_shelf_lib::achievement::Achievement;
 use achievement_shelf_lib::gog::GogPaths;
 use achievement_shelf_lib::steam::{stats, SteamPaths};
@@ -16,17 +18,21 @@ fn platinum(a: &Achievement) -> &'static str {
     if a.platinum { "  [PLATINUM]" } else { "" }
 }
 
+/// Prints a launcher's unlocks with their game names.
+fn print_all(list: &[Achievement], names: &HashMap<String, String>) {
+    for a in list {
+        let game = names.get(&a.game_key()).map_or(a.game_id.as_str(), String::as_str);
+        println!("{game:>24}  {:>10}  {:>6}  {}  —  {}{}", a.unlocked_at, rarity(a), a.title, a.description, platinum(a));
+    }
+}
+
 fn main() -> Result<(), String> {
     let arg = std::env::args().nth(1);
     let achievements = if arg.as_deref() == Some("--gog") {
         let gog = GogPaths::locate()?;
         println!("GOG Galaxy: {}", gog.db.display());
-        let names = gog.names()?;
         let list = gog.load_all()?;
-        for a in &list {
-            let game = names.get(&a.game_key()).map_or(a.game_id.as_str(), String::as_str);
-            println!("{game:>24}  {:>10}  {:>6}  {}  —  {}{}", a.unlocked_at, rarity(a), a.title, a.description, platinum(a));
-        }
+        print_all(&list, &gog.names()?);
         list
     } else {
         let paths = SteamPaths::locate()?;

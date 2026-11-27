@@ -38,8 +38,8 @@ interface PickerData {
   /** Every saved trophy level, top first, including any past `trophyRows`. */
   trophies: TrophyKey[][];
   items: PickerItem[];
-  /** GOG store banner templates by game key, handed back to `get_banner`. */
-  gogCovers: Record<string, string>;
+  /** Banner URLs (templates, for GOG) by game key, handed back to `get_banner`. */
+  covers: Record<string, string>;
 }
 
 /** The part of the settings view that `change_shelf_rows` returns which the picker uses. */
@@ -71,6 +71,10 @@ const LAUNCHERS: { value: Launcher; label: string; missing?: string }[] = [
   { value: "steam", label: "Steam", missing: "Steam was not found on this PC." },
   { value: "gog", label: "GOG", missing: "GOG Galaxy was not found on this PC." },
 ];
+
+function sourceLabel(source: Source): string {
+  return LAUNCHERS.find((l) => l.value === source)?.label ?? source;
+}
 /** Rarity filter chips, rarest last as the tiers climb; "ungraded" has no rarity data. */
 const TIERS: { value: string; label: string }[] = [
   { value: "common", label: "Common" },
@@ -132,7 +136,7 @@ let perRail = 6;
 let launchers: Source[] = [];
 let items: PickerItem[] = [];
 let itemsByKey = new Map<string, PickerItem>();
-let gogCovers: Record<string, string> = {};
+let covers: Record<string, string> = {};
 /** The saved trophies of each level, top first. */
 let trophies: TrophyKey[][] = [];
 /** Trophy levels shown on the shelf. */
@@ -231,7 +235,7 @@ function coverFor(game: Game): Promise<string | null> {
     url = invoke<string | null>("get_banner", {
       source: game.source,
       gameId: game.gameId,
-      gogCover: gogCovers[game.key] ?? null,
+      cover: covers[game.key] ?? null,
     }).catch(() => null);
     coverCache.set(game.key, url);
   }
@@ -928,7 +932,7 @@ function renderSleeve(game: Game): HTMLButtonElement {
   stickers.set(game.key, sticker);
   const count = game.items.length;
   const filtered = achievementFiltersOn();
-  const source = game.source === "steam" ? "Steam" : "GOG";
+  const source = sourceLabel(game.source);
   const meta = filtered ? `${game.matches.length} of ${count} match` : `${count} unlocked`;
   sleeve.append(art, sticker, el("span", "sleeve-name", game.name), el("span", "sleeve-meta", `${source} · ${meta}`));
   sleeve.setAttribute("aria-label", `${game.name}, ${source}, ${meta}`);
@@ -1096,7 +1100,7 @@ function renderGame(game: Game) {
   void showCover(img, game);
   const onShelf = game.items.filter((i) => chosen.has(keyOf(i))).length;
   const title = el("div", "game-title");
-  const source = game.source === "steam" ? "Steam" : "GOG";
+  const source = sourceLabel(game.source);
   title.append(
     el("h2", "", game.name),
     el("p", "muted", `${source} · ${game.items.length} unlocked${onShelf ? ` · ${onShelf} on the shelf` : ""}`),
@@ -1200,7 +1204,7 @@ async function load() {
   launchers = data.launchers;
   items = data.items;
   itemsByKey = new Map(items.map((i) => [keyOf(i), i]));
-  gogCovers = data.gogCovers ?? {};
+  covers = data.covers ?? {};
   trophies = data.trophies;
   chosen = new Set(trophies.flat().map(keyOf));
   // Choosing a trophy also fires an update; only rebuild the list when the achievements changed.

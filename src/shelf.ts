@@ -858,7 +858,7 @@ function renderMovable(item: ShelfItem, isNew: boolean, trophy: boolean): HTMLEl
 /*
  * Refreshes reuse the slots of unchanged achievements, so their icons are not decoded again,
  * the hovered slab stays lifted and the tooltip stays up. Updates come often: every trophy
- * reorder, row change and stats file write by Steam or GOG.
+ * reorder, row change and achievement file write by a launcher.
  */
 interface Rendered {
   item: ShelfItem;

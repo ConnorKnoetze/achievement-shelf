@@ -1,4 +1,4 @@
-//! Launcher-neutral achievement data shared by the Steam and GOG readers.
+//! Launcher-neutral achievement data shared by the launcher readers.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -86,6 +86,32 @@ pub fn crown_platinum(achievements: &mut [Achievement], is_complete: impl Fn(&Ac
     }
 }
 
+/// Parses a UTC `YYYY-MM-DD HH:MM:SS` or ISO 8601 `YYYY-MM-DDTHH:MM:SS[.fff][Z]` time into
+/// unix seconds.
+pub fn parse_utc_time(text: &str) -> Option<u32> {
+    let (date, time) = text.trim().split_once([' ', 'T'])?;
+    let mut d = date.splitn(3, '-').map(|p| p.parse::<i64>().ok());
+    let (year, month, day) = (d.next()??, d.next()??, d.next()??);
+    let mut t = time.splitn(3, ':').map(|p| p.get(..2).unwrap_or(p).parse::<i64>().ok());
+    let (hour, minute, second) = (t.next()??, t.next()??, t.next()??);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let secs = days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second;
+    u32::try_from(secs).ok()
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +163,16 @@ mod tests {
         list[1].source = Source::Gog;
         crown_platinum(&mut list, |_| true);
         assert_eq!(crowned(&list), ["A", "B"]);
+    }
+
+    #[test]
+    fn parses_utc_times() {
+        assert_eq!(parse_utc_time("1970-01-01 00:00:00"), Some(0));
+        assert_eq!(parse_utc_time("2000-03-01 12:30:15"), Some(951_913_815));
+        assert_eq!(parse_utc_time("2024-02-29 23:59:59"), Some(1_709_251_199));
+        assert_eq!(parse_utc_time("2022-08-07T00:27:27.000"), Some(1_659_832_047));
+        assert_eq!(parse_utc_time("2024-05-12T18:22:31Z"), Some(1_715_538_151));
+        assert_eq!(parse_utc_time("not a date"), None);
+        assert_eq!(parse_utc_time("2022-13-01 00:00:00"), None);
     }
 }

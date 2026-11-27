@@ -118,7 +118,7 @@ pub async fn icon_data_url(
 /// Where the game's banner is cached and the URLs to try, or `None` if there is none or the
 /// values are unsafe. Steam banners come from the app id; GOG ones from the store's
 /// `horizontalCover` URL template, which holds a `{formatter}` placeholder for the size.
-fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, gog_cover: Option<&str>) -> Option<(PathBuf, Vec<String>)> {
+fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, cover: Option<&str>) -> Option<(PathBuf, Vec<String>)> {
     let banners = cache_dir.join("banners");
     match source {
         Source::Steam => {
@@ -127,7 +127,7 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, gog_cover: Opt
             Some((banners.join(format!("{app_id}.jpg")), urls))
         }
         Source::Gog => {
-            let (id, _) = gog_cover?.strip_prefix(GOG_STORE_IMAGE_HOST)?.split_once("_{formatter}")?;
+            let (id, _) = cover?.strip_prefix(GOG_STORE_IMAGE_HOST)?.split_once("_{formatter}")?;
             if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
                 return None;
             }
@@ -143,9 +143,9 @@ pub async fn banner_data_url(
     cache_dir: &Path,
     source: Source,
     game_id: &str,
-    gog_cover: Option<&str>,
+    cover: Option<&str>,
 ) -> Option<String> {
-    let (path, urls) = locate_banner(cache_dir, source, game_id, gog_cover)?;
+    let (path, urls) = locate_banner(cache_dir, source, game_id, cover)?;
     if let Some(url) = remembered(&path) {
         return url;
     }

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use crate::achievement::{crown_platinum, game_key, Achievement, Source};
+use crate::achievement::{crown_platinum, game_key, parse_utc_time, Achievement, Source};
 
 pub const DB_FILE_NAME: &str = "galaxy-2.0.db";
 
@@ -123,7 +123,7 @@ fn unlocked(conn: &Connection) -> rusqlite::Result<Vec<Achievement>> {
             description: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
             hidden: !row.get::<_, bool>(3)?,
             icon: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-            unlocked_at: unlock_time.as_deref().and_then(parse_unlock_time).unwrap_or(0),
+            unlocked_at: unlock_time.as_deref().and_then(parse_utc_time).unwrap_or(0),
             rarity: row.get::<_, Option<f64>>(7)?.map(|r| r as f32),
             platinum: false,
         })
@@ -197,31 +197,6 @@ fn banners(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
         }
     }
     Ok(banners)
-}
-
-/// Parses Galaxy's `YYYY-MM-DD HH:MM:SS` (UTC) into unix seconds.
-fn parse_unlock_time(text: &str) -> Option<u32> {
-    let (date, time) = text.trim().split_once([' ', 'T'])?;
-    let mut d = date.splitn(3, '-').map(|p| p.parse::<i64>().ok());
-    let (year, month, day) = (d.next()??, d.next()??, d.next()??);
-    let mut t = time.splitn(3, ':').map(|p| p.get(..2).unwrap_or(p).parse::<i64>().ok());
-    let (hour, minute, second) = (t.next()??, t.next()??, t.next()??);
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
-        return None;
-    }
-    let secs = days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second;
-    u32::try_from(secs).ok()
-}
-
-/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's algorithm).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 #[cfg(test)]
@@ -328,15 +303,5 @@ mod tests {
         let banners = banners(&galaxy_db()).unwrap();
         assert_eq!(banners.len(), 1);
         assert_eq!(banners["gog:gog_1"], "https://images.gog-statics.com/5a51d9_{formatter}.png");
-    }
-
-    #[test]
-    fn parses_unlock_times() {
-        assert_eq!(parse_unlock_time("1970-01-01 00:00:00"), Some(0));
-        assert_eq!(parse_unlock_time("2000-03-01 12:30:15"), Some(951_913_815));
-        assert_eq!(parse_unlock_time("2024-02-29 23:59:59"), Some(1_709_251_199));
-        assert_eq!(parse_unlock_time("2022-08-07T00:27:27.000"), Some(1_659_832_047));
-        assert_eq!(parse_unlock_time("not a date"), None);
-        assert_eq!(parse_unlock_time("2022-13-01 00:00:00"), None);
     }
 }
