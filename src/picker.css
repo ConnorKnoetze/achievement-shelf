@@ -46,11 +46,20 @@ body {
   font-size: 17px;
 }
 
-.rails {
+.shelves {
+  flex: none;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 14px 28px;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The trophy levels, stacked top first as on the shelf. */
+.rails {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   max-height: 202px;
   margin-top: 14px;
   padding-top: 10px;
@@ -72,7 +81,8 @@ body {
   padding: 0 16px;
 }
 
-/* A compact slab, seated in the rail's slot. Clicking it takes it off the shelf. */
+/* A compact slab, seated in the rail's slot, spaced as on the shelf. Dragging it rearranges
+   the trophies; clicking it takes it off the shelf. */
 .pslab {
   position: relative;
   flex: 0 1 50px;
@@ -112,6 +122,42 @@ body {
   animation: slot-in 0.55s var(--lift) backwards;
 }
 
+/* Trophies can be picked up and moved along the rails. */
+.pslab.movable {
+  cursor: grab;
+}
+
+.rails.dragging,
+.rails.dragging .pslab {
+  cursor: grabbing;
+}
+
+/* While one is carried, the others stay seated; its own place shows faded. */
+.rails.dragging .pslab:hover,
+.pslab.drag-source {
+  transform: none;
+}
+
+.pslab.drag-source {
+  opacity: 0.25;
+}
+
+/* Placed by a translate set from script, so moving it never re-runs layout. */
+.pslab.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  margin: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.2),
+    0 18px 22px -6px rgba(0, 0, 0, 0.6);
+  transition: none;
+}
+
 .pslab-grade {
   flex-direction: column;
   height: 18px;
@@ -139,16 +185,15 @@ body {
   white-space: nowrap;
 }
 
-/* An empty slot: the outline of where a slab will stand. */
-.pslot {
-  flex: 0 1 50px;
-  min-width: 34px;
-  width: 50px;
-  height: 67px;
-  border: 1px dashed rgba(255, 255, 255, 0.14);
-  border-bottom: 0;
-  border-radius: 4px 4px 0 0;
-  background: rgba(255, 255, 255, 0.02);
+/* Shown on the first rail while the shelf is empty, as the shelf's placard is. */
+.rail-placard {
+  margin-bottom: -3px;
+  padding: 6px 12px;
+  border-radius: 3px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  box-shadow: 0 5px 9px -3px rgba(0, 0, 0, 0.5);
 }
 
 /* Icons sit in a dark insert, as on the shelf. */
