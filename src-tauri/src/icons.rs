@@ -19,6 +19,9 @@ const STEAM_CDNS: [&str; 2] = [
 
 /// GOG stores full icon URLs; only ones on its image host are fetched.
 const GOG_IMAGE_HOST: &str = "https://images.gog.com/";
+/// GOG Galaxy stores 60x60 icons (`{hash}_gac_60.jpg`); the unsized `{hash}.webp` is the
+/// 240x240 original. The stored URL stays as a fallback.
+const GOG_ICON_FORMAT: &str = ".webp";
 
 /// Steam serves a game's store header (460x215) from these hosts, under `/{app_id}/header.jpg`.
 const STEAM_BANNER_HOSTS: [&str; 2] = [
@@ -28,8 +31,9 @@ const STEAM_BANNER_HOSTS: [&str; 2] = [
 
 /// GOG store images are served from this host; only banners on it are fetched.
 const GOG_STORE_IMAGE_HOST: &str = "https://images.gog-statics.com/";
-/// Fills the `{formatter}` of a GOG `horizontalCover` template: a 432x243 JPEG tile.
-const GOG_BANNER_FORMAT: &str = "_product_tile_extended_432x243.jpg";
+/// Fill the `{formatter}` of a GOG `horizontalCover` template, best first: a 1020x574 JPEG,
+/// then the 432x243 tile.
+const GOG_BANNER_FORMATS: [&str; 2] = ["_ggvgm_2x.jpg", "_product_tile_extended_432x243.jpg"];
 
 /// How long an image that could not be found is left before it is looked for again.
 const MISS_RETRY: Duration = Duration::from_secs(10 * 60);
@@ -82,7 +86,14 @@ fn locate(cache_dir: &Path, source: Source, game_id: &str, icon: &str) -> Option
             if !is_safe_file_name(file) {
                 return None;
             }
-            Some((icons.join("gog").join(file), vec![icon.to_string()]))
+            let stem = file.split_once('.').map_or(file, |(stem, _)| stem);
+            let hash = stem.split_once('_').map_or(stem, |(hash, _)| hash);
+            if hash.is_empty() {
+                return None;
+            }
+            let full = format!("{hash}{GOG_ICON_FORMAT}");
+            let urls = vec![format!("{GOG_IMAGE_HOST}{full}"), icon.to_string()];
+            Some((icons.join("gog").join(full), urls))
         }
     }
 }
@@ -120,9 +131,8 @@ fn locate_banner(cache_dir: &Path, source: Source, game_id: &str, gog_cover: Opt
             if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
                 return None;
             }
-            let file = format!("{id}{GOG_BANNER_FORMAT}");
-            let url = format!("{GOG_STORE_IMAGE_HOST}{file}");
-            Some((banners.join("gog").join(file), vec![url]))
+            let urls = GOG_BANNER_FORMATS.iter().map(|f| format!("{GOG_STORE_IMAGE_HOST}{id}{f}")).collect();
+            Some((banners.join("gog").join(format!("{id}{}", GOG_BANNER_FORMATS[0])), urls))
         }
     }
 }
@@ -147,7 +157,7 @@ pub async fn banner_data_url(
 async fn load_banner(client: &reqwest::Client, path: &Path, urls: &[String], source: Source, game_id: &str) -> Option<String> {
     let what = format!("banner for {source} game {game_id}");
     if let Some(bytes) = tokio_read(path).await {
-        return Some(data_url(path, &bytes));
+        return Some(data_url(&bytes));
     }
     let mut bytes = download(client, urls).await;
     if bytes.is_none() && source == Source::Steam {
@@ -164,7 +174,7 @@ async fn load_banner(client: &reqwest::Client, path: &Path, urls: &[String], sou
         return None;
     };
     store(path, &bytes, &what);
-    Some(data_url(path, &bytes))
+    Some(data_url(&bytes))
 }
 
 /// Whether a header URL from the store API points at that app's images on a Steam image host.
@@ -186,7 +196,7 @@ async fn cached_data_url(client: &reqwest::Client, path: &Path, urls: &[String],
             bytes
         }
     };
-    Some(data_url(path, &bytes))
+    Some(data_url(&bytes))
 }
 
 /// Writes a downloaded image to the disk cache; failures are logged, not fatal.
@@ -199,9 +209,16 @@ fn store(path: &Path, bytes: &[u8], what: &str) {
     }
 }
 
-/// Encodes an image as a `data:` URL, typed by the cache file's extension.
-fn data_url(path: &Path, bytes: &[u8]) -> String {
-    let mime = if path.extension().is_some_and(|e| e == "png") { "image/png" } else { "image/jpeg" };
+/// Encodes an image as a `data:` URL, typed by its contents: a fallback URL may have
+/// served a different format than the cache file's extension names.
+fn data_url(bytes: &[u8]) -> String {
+    let mime = if bytes.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "image/jpeg"
+    };
     format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
@@ -237,8 +254,8 @@ mod tests {
         assert!(locate(cache, Source::Steam, "../1", "abc.jpg").is_none());
 
         let (path, urls) = locate(cache, Source::Gog, "gog_1", "https://images.gog.com/abc_gac_60.jpg").unwrap();
-        assert_eq!(path, cache.join("icons").join("gog").join("abc_gac_60.jpg"));
-        assert_eq!(urls, ["https://images.gog.com/abc_gac_60.jpg"]);
+        assert_eq!(path, cache.join("icons").join("gog").join("abc.webp"));
+        assert_eq!(urls, ["https://images.gog.com/abc.webp", "https://images.gog.com/abc_gac_60.jpg"]);
         assert!(locate(cache, Source::Gog, "gog_1", "https://evil.example/abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/../abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/a/b.jpg").is_none());
@@ -259,8 +276,14 @@ mod tests {
 
         let cover = "https://images.gog-statics.com/5a51d9_{formatter}.png";
         let (path, urls) = locate_banner(cache, Source::Gog, "gog_1", Some(cover)).unwrap();
-        assert_eq!(path, cache.join("banners").join("gog").join("5a51d9_product_tile_extended_432x243.jpg"));
-        assert_eq!(urls, ["https://images.gog-statics.com/5a51d9_product_tile_extended_432x243.jpg"]);
+        assert_eq!(path, cache.join("banners").join("gog").join("5a51d9_ggvgm_2x.jpg"));
+        assert_eq!(
+            urls,
+            [
+                "https://images.gog-statics.com/5a51d9_ggvgm_2x.jpg",
+                "https://images.gog-statics.com/5a51d9_product_tile_extended_432x243.jpg",
+            ]
+        );
         assert!(locate_banner(cache, Source::Gog, "gog_1", None).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://evil.example/5a51d9_{formatter}.png")).is_none());
         assert!(locate_banner(cache, Source::Gog, "gog_1", Some("https://images.gog-statics.com/../x_{formatter}.png")).is_none());

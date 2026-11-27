@@ -1,6 +1,8 @@
-/* Shared ground for the setup windows (trophy picker and settings). They are the
-   workbench behind the shelf: graphite anodised ground, machined hairlines, the same
-   rail and printed grade labels as the shelf, and brass for "on the trophy shelf". */
+/* Shared ground for the setup windows (trophy picker, settings, updater). They are the
+   record shop behind the shelf, lit at night: an aubergine ground, lilac-grey divider
+   cards for whatever is selected or active, and a round lemon sticker that means one thing only,
+   "on the trophy shelf". The shelf's own rail, acrylic slabs and printed grade labels are
+   drawn exactly as on the shelf. */
 
 @font-face {
   font-family: "Barlow Condensed";
@@ -36,43 +38,57 @@
 }
 
 /* The window palette, dark by default. A `.case` is a drawing of the shelf (the picker's
-   bench, the settings' level diagram) and keeps it in light mode too, as the shelf does. */
+   bench, the settings' level diagram) and keeps the dark palette in light mode too, as the
+   shelf does. */
 :root,
 .case {
-  --ground: #131518;
-  --bench: #0c0e10;
-  --panel: #1a1d21;
-  --panel-hover: #22262b;
-  --line: #2a2f35;
-  --line-strong: #3a4048;
-  --line-hover: #4b525b;
-  --text: #ebe8e1;
-  --muted: #9ba2aa;
+  --ground: #17111c;
+  --bench: #0d0910;
+  --panel: #211829;
+  --panel-hover: #2a2034;
+  --sunk: #120d16;
+  --line: #33263d;
+  --line-strong: #45364f;
+  --line-hover: #65536f;
+  --text: #efe8f2;
+  --muted: #a596ad;
+  /* The lilac-grey divider card: selection and active state. */
+  --divider: #d6c8de;
+  --on-divider: #1d1422;
+  /* The lemon price sticker: "on the trophy shelf", and nothing else. */
+  --sticker: #ffe14d;
+  --on-sticker: #1d1422;
+  /* The trophy rail's brushed brass, kept for the rail and the updater's progress. */
   --brass: #e2c07a;
   --brass-dark: #8a642a;
-  /* What sits on a brass fill, such as a switch's knob. */
   --on-brass: #16181b;
-  --chosen: #221f1a;
+  --sleeve-shadow: 0 12px 20px -10px rgba(0, 0, 0, 0.8);
+  --record: #0d0910;
+  --groove: #2e2336;
   color-scheme: dark;
 }
 
-/* Light mode: the same workbench in clear anodised aluminium, with the brass darkened so it
-   still reads as text. Tauri sets the scheme from the theme setting (src-tauri apply_theme). */
+/* Light mode: the same shop by daylight. A pale lilac ground, plum ink, a deeper lemon so
+   the sticker still stands off the page. Tauri sets the scheme from the theme setting (src-tauri apply_theme). */
 @media (prefers-color-scheme: light) {
   :root {
-    --ground: #e8e6e1;
-    --bench: #ffffff;
-    --panel: #f7f6f2;
-    --panel-hover: #eeece6;
-    --line: #d9d6ce;
-    --line-strong: #c2bdb2;
-    --line-hover: #a39d91;
-    --text: #1b1d20;
-    --muted: #5d6269;
+    --ground: #efe9f1;
+    --panel: #f9f6fa;
+    --panel-hover: #ffffff;
+    --sunk: #fdfbfd;
+    --line: #ddd2e2;
+    --line-strong: #c3b4cb;
+    --line-hover: #9c8aa6;
+    --text: #211829;
+    --muted: #625469;
+    --divider: #c7b2d4;
+    --on-divider: #1d1422;
+    --sticker: #e0b800;
+    --on-sticker: #1d1422;
     --brass: #8f6620;
     --brass-dark: #6b4b16;
     --on-brass: #ffffff;
-    --chosen: #f6eedb;
+    --sleeve-shadow: 0 10px 18px -10px rgba(45, 25, 55, 0.5);
     color-scheme: light;
   }
 }
@@ -84,7 +100,8 @@
   --rail-top: #34383e;
   --rail-face: #17191c;
   --rail-base: #0a0b0d;
-  --grade-face: "Barlow Condensed", "Segoe UI", system-ui, sans-serif;
+  --label-face: "Barlow Condensed", "Segoe UI", system-ui, sans-serif;
+  --grade-face: var(--label-face);
   --lift: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -107,17 +124,17 @@ body {
   color: var(--text);
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 ::selection {
-  background: rgba(226, 192, 122, 0.35);
+  background: color-mix(in srgb, var(--divider) 45%, transparent);
   color: var(--text);
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 
 ::-webkit-scrollbar-track {
@@ -126,7 +143,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--line-strong) padding-box;
 }
 
@@ -135,51 +152,68 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--brass);
+  outline: 2px solid var(--divider);
   outline-offset: 2px;
 }
 
-h1 {
+/* Headings are the divider cards' hand: condensed caps. */
+h1,
+h2 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-family: var(--label-face);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: 24px;
 }
 
 h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: 18px;
 }
 
 .muted {
   color: var(--muted);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Numerals set like the printed grade. */
 .figure {
-  font-family: var(--grade-face);
-  font-weight: 600;
-  font-size: 15px;
+  font-family: var(--label-face);
+  font-weight: 700;
+  font-size: 16px;
   letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 
-/* Buttons and fields: machined, small radius, one hairline. */
+/* Buttons, steppers and fields are pills: small controls, rounded right off. */
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 15px;
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--panel);
+  border-radius: 999px;
+  background: transparent;
   color: var(--text);
   font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .btn:hover:not(:disabled) {
@@ -188,7 +222,7 @@ h2 {
 }
 
 .btn:active:not(:disabled) {
-  background: var(--bench);
+  background: var(--sunk);
 }
 
 .btn:disabled {
@@ -201,22 +235,52 @@ h2 {
   height: 14px;
 }
 
-/* Stepper: minus, the count, plus. */
+/* A quiet text action, such as "Clear filters". */
+.link {
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--line-hover);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.link:hover {
+  text-decoration-color: currentColor;
+}
+
+.link[hidden] {
+  display: none;
+}
+
+/* Stepper: minus, the count, plus, in one pill. */
 .stepper {
   flex: none;
   display: flex;
   align-items: center;
+  height: 32px;
+  padding: 0 2px;
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--bench);
+  border-radius: 999px;
+}
+
+.stepper-label {
+  padding: 0 4px 0 12px;
+  color: var(--muted);
 }
 
 .stepper button {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: 0;
+  border-radius: 50%;
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -233,22 +297,61 @@ h2 {
 }
 
 .stepper button:hover:not(:disabled) {
-  background: var(--panel-hover);
-  color: var(--brass);
-}
-
-.stepper button:focus-visible {
-  outline-offset: -2px;
+  background: var(--divider);
+  color: var(--on-divider);
 }
 
 .stepper button:disabled {
-  color: var(--line-strong);
+  color: var(--line-hover);
   cursor: default;
 }
 
 .stepper output {
-  min-width: 26px;
+  min-width: 24px;
   text-align: center;
+}
+
+/* Segmented pills: the chosen segment is a lilac divider card. */
+.seg {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+}
+
+.seg button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.seg button:hover:not([aria-pressed="true"]) {
+  color: var(--text);
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--divider);
+  color: var(--on-divider);
+}
+
+.seg-count {
+  font-family: var(--label-face);
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 
 .field {
@@ -259,7 +362,7 @@ h2 {
 
 .field svg {
   position: absolute;
-  left: 9px;
+  left: 12px;
   width: 14px;
   height: 14px;
   color: var(--muted);
@@ -268,10 +371,10 @@ h2 {
 
 .input,
 .select {
-  height: 30px;
+  height: 32px;
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--bench);
+  border-radius: 999px;
+  background-color: var(--sunk);
   color: var(--text);
   font: inherit;
   transition: border-color 0.15s;
@@ -279,15 +382,15 @@ h2 {
 
 .input {
   width: 100%;
-  padding: 0 9px;
+  padding: 0 14px;
 }
 
 .field svg + .input {
-  padding-left: 29px;
+  padding-left: 33px;
 }
 
 .input::placeholder {
-  color: #7d848c;
+  color: var(--muted);
 }
 
 .input:hover,
@@ -298,35 +401,72 @@ h2 {
 .input:focus-visible,
 .select:focus-visible {
   outline: none;
-  border-color: var(--brass);
-  box-shadow: 0 0 0 1px var(--brass);
+  border-color: var(--divider);
+  box-shadow: 0 0 0 1px var(--divider);
 }
 
 .input::-webkit-search-cancel-button {
   appearance: none;
   width: 12px;
   height: 12px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ba2aa' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E") center / contain no-repeat;
+  background: var(--muted);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E") center / contain no-repeat;
   cursor: pointer;
 }
 
 .select {
   appearance: none;
-  padding: 0 28px 0 9px;
-  background: var(--bench) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ba2aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") right 8px center / 14px no-repeat;
+  padding: 0 32px 0 14px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a596ad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 11px center;
+  background-size: 14px;
+  background-repeat: no-repeat;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .select option {
   background: var(--panel);
   color: var(--text);
+  font-weight: 400;
+}
+
+/* The divider card: a lilac tab heading a section, standing on a lilac rule. */
+.divider-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 6px 14px 4px;
+  border-radius: 6px 6px 0 0;
+  background: var(--divider);
+  color: var(--on-divider);
+}
+
+.divider-rule {
+  border-top: 3px solid var(--divider);
+}
+
+/* The price sticker: round, lemon, "on the trophy shelf". */
+.sticker {
+  display: grid;
+  place-content: center;
+  border-radius: 50%;
+  background: var(--sticker);
+  color: var(--on-sticker);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+  font-family: var(--label-face);
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 /* Errors print on a card-stock slip, like the shelf's placards. */
 .status {
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 3px;
+  padding: 8px 14px;
+  border-radius: 6px;
   background: var(--card);
   color: var(--ink);
   box-shadow: 0 5px 9px -3px rgba(0, 0, 0, 0.5);

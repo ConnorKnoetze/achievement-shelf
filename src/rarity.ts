@@ -44,11 +44,8 @@ export function gradeLabel(percent: number | null, className: string): HTMLSpanE
 
 export const PLATINUM_TITLE = "Platinum: completed the game with every achievement unlocked";
 
-/**
- * The platinum label, printed beside the grade on the achievement that completed its game.
- * `note`, when given, is printed on card stock after the platinum block.
- */
-export function platinumLabel(className: string, note?: string): HTMLSpanElement {
+/** The platinum label, printed beside the grade on the achievement that completed its game. */
+export function platinumLabel(className: string): HTMLSpanElement {
   const label = document.createElement("span");
   label.className = `${className} tier-platinum`;
   label.title = PLATINUM_TITLE;
@@ -56,11 +53,5 @@ export function platinumLabel(className: string, note?: string): HTMLSpanElement
   tierEl.className = "grade-tier";
   tierEl.textContent = "Platinum";
   label.append(tierEl);
-  if (note) {
-    const noteEl = document.createElement("span");
-    noteEl.className = "grade-pct";
-    noteEl.textContent = note;
-    label.append(noteEl);
-  }
   return label;
 }

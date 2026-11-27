@@ -8,15 +8,15 @@
   </head>
   <body>
     <header class="bench case">
-      <div class="bench-head">
-        <div class="bench-title">
-          <h1>Trophy shelf</h1>
-          <p id="hint" class="hint">Pick the achievements you are most proud of. They sit on the gold shelf above your recent unlocks.</p>
-        </div>
-        <span class="count"><span id="count" class="figure"></span> placed</span>
-        <div class="shelves">
-          <span class="muted" id="shelves-label">Shelves</span>
+      <div class="wrap">
+        <div class="bench-head">
+          <div class="bench-title">
+            <h1>Trophy shelf</h1>
+            <p id="hint" class="hint"></p>
+          </div>
+          <span class="count"><span id="count" class="figure"></span> placed</span>
           <div class="stepper" role="group" aria-labelledby="shelves-label">
+            <span class="stepper-label" id="shelves-label">Shelves</span>
             <button id="shelf-remove" type="button" aria-label="Remove a trophy shelf">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
             </button>
@@ -25,43 +25,48 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
             </button>
           </div>
+          <button id="clear" class="btn" type="button">Clear shelf</button>
         </div>
-        <button id="clear" class="btn" type="button">Clear shelf</button>
+        <div id="rails" class="rails" role="list" aria-label="Your trophy shelves"></div>
       </div>
-      <div id="rails" class="rails" role="list" aria-label="Your trophy rail"></div>
     </header>
 
-    <div class="toolbar">
-      <div id="tabs" class="tabs" role="tablist" aria-label="Launcher"></div>
-      <label class="field search-field">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" />
-        </svg>
-        <input id="search" class="input" type="search" placeholder="Search achievements or games" autocomplete="off" aria-label="Search achievements or games" />
-      </label>
-      <label class="sort">
-        <span class="muted">Sort</span>
-        <select id="sort" class="select">
-          <option value="newest">Newest unlocks</option>
-          <option value="rarest">Rarest first</option>
-          <option value="platinum">Platinums first</option>
-        </select>
-      </label>
+    <div class="filters">
+      <div class="wrap filters-inner">
+        <div class="filter-row">
+          <div id="views" class="seg" role="group" aria-label="Browse by">
+            <button type="button" data-view="games">Games</button>
+            <button type="button" data-view="achievements">Achievements</button>
+          </div>
+          <label class="field search-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" />
+            </svg>
+            <input id="search" class="input" type="search" autocomplete="off" />
+          </label>
+          <div id="launchers" class="seg" role="group" aria-label="Launcher"></div>
+          <label class="sort">
+            <span class="sr-only">Sort</span>
+            <select id="sort" class="select" aria-label="Sort"></select>
+          </label>
+        </div>
+        <div class="filter-row">
+          <div id="tiers" class="chips" role="group" aria-label="Rarity"></div>
+          <button id="platinum" class="chip" type="button" aria-pressed="false">
+            <span class="chip-swatch tier-platinum" aria-hidden="true"></span>Platinum
+          </button>
+          <select id="shelf-filter" class="select select-quiet" aria-label="Show">
+            <option value="any">Shelf: any</option>
+            <option value="on">On the shelf</option>
+            <option value="off">Not on the shelf</option>
+          </select>
+          <button id="clear-filters" class="link" type="button" hidden>Clear filters</button>
+        </div>
+      </div>
     </div>
     <p id="status" class="status" role="alert" hidden></p>
 
-    <div class="content">
-      <aside class="sidebar" aria-label="Games">
-        <label class="field game-filter">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" />
-          </svg>
-          <input id="game-filter" class="input" type="search" placeholder="Filter games" autocomplete="off" aria-label="Filter games" />
-        </label>
-        <nav id="games" class="games"></nav>
-      </aside>
-      <main id="list" class="list" role="tabpanel"></main>
-    </div>
+    <main id="list" class="list" aria-busy="true"></main>
     <script type="module" src="/src/picker.ts"></script>
   </body>
 </html>

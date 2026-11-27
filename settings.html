@@ -11,55 +11,57 @@
 
     <section class="group" aria-labelledby="levels-heading">
       <div class="group-head">
-        <h2 id="levels-heading">Shelf levels</h2>
+        <h2 id="levels-heading" class="divider-card">Shelf levels</h2>
         <span class="total"><span id="levels-total" class="figure"></span> levels</span>
       </div>
-      <div class="levels">
-        <div id="levels-diagram" class="diagram case" aria-hidden="true"></div>
-        <div class="level-controls">
-          <div class="setting">
-            <div class="setting-text">
-              <span class="setting-label" id="trophy-label">Trophy levels</span>
-              <span class="setting-hint">Gold shelves for the achievements you pick. At least one.</span>
+      <div class="group-body divider-rule">
+        <div class="levels">
+          <div id="levels-diagram" class="diagram case" aria-hidden="true"></div>
+          <div class="level-controls">
+            <div class="setting">
+              <div class="setting-text">
+                <span class="setting-label" id="trophy-label">Trophy levels</span>
+                <span class="setting-hint">Brass rails for the achievements you pick. At least one.</span>
+              </div>
+              <div class="stepper" role="group" aria-labelledby="trophy-label">
+                <button id="trophy-remove" type="button" aria-label="Remove a trophy level">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+                </button>
+                <output id="trophy-rows" class="figure" aria-live="polite"></output>
+                <button id="trophy-add" type="button" aria-label="Add a trophy level">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
+                </button>
+              </div>
             </div>
-            <div class="stepper" role="group" aria-labelledby="trophy-label">
-              <button id="trophy-remove" type="button" aria-label="Remove a trophy level">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
-              </button>
-              <output id="trophy-rows" class="figure" aria-live="polite"></output>
-              <button id="trophy-add" type="button" aria-label="Add a trophy level">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
-              </button>
+            <div class="setting">
+              <div class="setting-text">
+                <span class="setting-label" id="recent-label">Recent levels</span>
+                <span class="setting-hint">Your newest unlocks. Can be none.</span>
+              </div>
+              <div class="stepper" role="group" aria-labelledby="recent-label">
+                <button id="recent-remove" type="button" aria-label="Remove a recent level">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+                </button>
+                <output id="recent-rows" class="figure" aria-live="polite"></output>
+                <button id="recent-add" type="button" aria-label="Add a recent level">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="setting">
-            <div class="setting-text">
-              <span class="setting-label" id="recent-label">Recent levels</span>
-              <span class="setting-hint">Your newest unlocks. Can be none.</span>
-            </div>
-            <div class="stepper" role="group" aria-labelledby="recent-label">
-              <button id="recent-remove" type="button" aria-label="Remove a recent level">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
-              </button>
-              <output id="recent-rows" class="figure" aria-live="polite"></output>
-              <button id="recent-add" type="button" aria-label="Add a recent level">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
-              </button>
-            </div>
-          </div>
-          <div class="setting">
-            <div class="setting-text">
-              <span class="setting-label" id="per-row-label">Level width</span>
-              <span class="setting-hint" id="per-row-hint"></span>
-            </div>
-            <div class="stepper" role="group" aria-labelledby="per-row-label">
-              <button id="per-row-remove" type="button" aria-label="Fit fewer achievements on each level">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
-              </button>
-              <output id="per-row" class="figure" aria-live="polite"></output>
-              <button id="per-row-add" type="button" aria-label="Fit more achievements on each level">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
-              </button>
+            <div class="setting">
+              <div class="setting-text">
+                <span class="setting-label" id="per-row-label">Level width</span>
+                <span class="setting-hint" id="per-row-hint"></span>
+              </div>
+              <div class="stepper" role="group" aria-labelledby="per-row-label">
+                <button id="per-row-remove" type="button" aria-label="Fit fewer achievements on each level">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+                </button>
+                <output id="per-row" class="figure" aria-live="polite"></output>
+                <button id="per-row-add" type="button" aria-label="Fit more achievements on each level">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12" /></svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -68,68 +70,74 @@
 
     <section class="group" aria-labelledby="window-heading">
       <div class="group-head">
-        <h2 id="window-heading">Window</h2>
+        <h2 id="window-heading" class="divider-card">Window</h2>
       </div>
-      <div class="setting">
-        <label class="setting-text" for="display">
-          <span class="setting-label">Display</span>
-          <span class="setting-hint">The shelf sits in its bottom-right corner.</span>
+      <div class="group-body divider-rule">
+        <div class="setting">
+          <label class="setting-text" for="display">
+            <span class="setting-label">Display</span>
+            <span class="setting-hint">The shelf sits in its bottom-right corner.</span>
+          </label>
+          <select id="display" class="select"></select>
+        </div>
+        <div class="setting">
+          <label class="setting-text" for="scale">
+            <span class="setting-label">Shelf size</span>
+            <span class="setting-hint">At 100%, ten levels reach the top of the screen.</span>
+          </label>
+          <input id="scale" type="range" step="0.05" />
+          <output id="scale-value" for="scale" class="range-value figure"></output>
+          <button id="scale-reset" class="icon-btn" type="button" aria-label="Reset shelf size to the default for this screen" title="Reset to default">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.34-5.66M4 4v4h4" /></svg>
+          </button>
+        </div>
+        <label class="setting toggle">
+          <span class="setting-text">
+            <span class="setting-label">Keep above other windows</span>
+            <span class="setting-hint">Otherwise it sits on the desktop, behind your windows.</span>
+          </span>
+          <input id="on-top" type="checkbox" role="switch" />
         </label>
-        <select id="display" class="select"></select>
-      </div>
-      <div class="setting">
-        <label class="setting-text" for="scale">
-          <span class="setting-label">Shelf size</span>
-          <span class="setting-hint">At 100%, ten levels reach the top of the screen. Fewer levels can go larger.</span>
+        <label class="setting toggle">
+          <span class="setting-text">
+            <span class="setting-label">Start with Windows</span>
+          </span>
+          <input id="autostart" type="checkbox" role="switch" />
         </label>
-        <input id="scale" type="range" step="0.05" />
-        <output id="scale-value" for="scale" class="range-value figure"></output>
-        <button id="scale-reset" class="icon-btn" type="button" aria-label="Reset shelf size to the default for this screen" title="Reset to default">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.34-5.66M4 4v4h4" /></svg>
-        </button>
       </div>
-      <label class="setting toggle">
-        <span class="setting-text">
-          <span class="setting-label">Keep above other windows</span>
-          <span class="setting-hint">Otherwise the shelf sits on the desktop, behind windows.</span>
-        </span>
-        <input id="on-top" type="checkbox" role="switch" />
-      </label>
-      <label class="setting toggle">
-        <span class="setting-text">
-          <span class="setting-label">Start with Windows</span>
-        </span>
-        <input id="autostart" type="checkbox" role="switch" />
-      </label>
     </section>
 
     <section class="group" aria-labelledby="appearance-heading">
       <div class="group-head">
-        <h2 id="appearance-heading">Appearance</h2>
+        <h2 id="appearance-heading" class="divider-card">Appearance</h2>
       </div>
-      <label class="setting toggle">
-        <span class="setting-text">
-          <span class="setting-label">Match Windows theme</span>
-          <span class="setting-hint">Light or dark, following your PC as it changes.</span>
-        </span>
-        <input id="theme-system" type="checkbox" role="switch" />
-      </label>
-      <label class="setting toggle">
-        <span class="setting-text">
-          <span class="setting-label">Light mode</span>
-          <span class="setting-hint">For these windows. The shelf stays dark.</span>
-        </span>
-        <input id="theme-light" type="checkbox" role="switch" />
-      </label>
+      <div class="group-body divider-rule">
+        <label class="setting toggle">
+          <span class="setting-text">
+            <span class="setting-label">Match Windows theme</span>
+            <span class="setting-hint">Follows your PC's light or dark mode.</span>
+          </span>
+          <input id="theme-system" type="checkbox" role="switch" />
+        </label>
+        <label class="setting toggle">
+          <span class="setting-text">
+            <span class="setting-label">Light mode</span>
+            <span class="setting-hint">For these windows. The shelf stays dark.</span>
+          </span>
+          <input id="theme-light" type="checkbox" role="switch" />
+        </label>
+      </div>
     </section>
 
-    <section class="group">
-      <div class="setting">
-        <div class="setting-text">
-          <span class="setting-label" id="reset-label">Reset settings</span>
-          <span class="setting-hint">Puts every setting back to how it started. Your trophies stay.</span>
+    <section class="group group-plain">
+      <div class="group-body">
+        <div class="setting">
+          <div class="setting-text">
+            <span class="setting-label" id="reset-label">Reset settings</span>
+            <span class="setting-hint">Every setting back to how it started. Your trophies stay.</span>
+          </div>
+          <button id="reset" class="btn" type="button" aria-describedby="reset-label">Reset</button>
         </div>
-        <button id="reset" class="btn" type="button" aria-describedby="reset-label">Reset</button>
       </div>
     </section>
 
