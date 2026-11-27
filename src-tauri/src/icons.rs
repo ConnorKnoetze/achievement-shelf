@@ -156,11 +156,20 @@ pub async fn banner_data_url(
 
 async fn load_banner(client: &reqwest::Client, path: &Path, urls: &[String], source: Source, game_id: &str) -> Option<String> {
     let what = format!("banner for {source} game {game_id}");
+    let steam = source == Source::Steam;
     if let Some(bytes) = tokio_read(path).await {
-        return Some(data_url(&bytes));
+        // Earlier versions cached Steam's placeholder; those are looked up again.
+        if !steam || !is_blank_image(bytes.clone()).await {
+            return Some(data_url(&bytes));
+        }
     }
     let mut bytes = download(client, urls).await;
-    if bytes.is_none() && source == Source::Steam {
+    if steam {
+        if let Some(found) = bytes.take() {
+            bytes = (!is_blank_image(found.clone()).await).then_some(found);
+        }
+    }
+    if bytes.is_none() && steam {
         // Newer games keep their header under a hashed path that only the store API knows.
         let app_id: u32 = game_id.parse().ok()?;
         if let Some(url) = steam::names::fetch_store_header(client, app_id).await {
@@ -175,6 +184,28 @@ async fn load_banner(client: &reqwest::Client, path: &Path, urls: &[String], sou
     };
     store(path, &bytes, &what);
     Some(data_url(&bytes))
+}
+
+/// Brightness spread (standard deviation, 0-255) below which an image counts as a blank fill.
+/// Steam's placeholder measures about 1; the flattest real store headers are near 30.
+const BLANK_STDDEV: f64 = 8.0;
+
+/// Whether an image is a near-solid fill. For games whose header moved to a hashed path,
+/// Steam answers the old `/{app_id}/header.jpg` with a plain grey placeholder, not a 404.
+async fn is_blank_image(bytes: Vec<u8>) -> bool {
+    tauri::async_runtime::spawn_blocking(move || is_blank(&bytes)).await.unwrap_or(false)
+}
+
+fn is_blank(bytes: &[u8]) -> bool {
+    let Ok(image) = image::load_from_memory(bytes) else { return false };
+    let luma = image.to_luma8();
+    if luma.is_empty() {
+        return true;
+    }
+    let n = luma.len() as f64;
+    let mean = luma.iter().map(|&p| f64::from(p)).sum::<f64>() / n;
+    let variance = luma.iter().map(|&p| (f64::from(p) - mean).powi(2)).sum::<f64>() / n;
+    variance.sqrt() < BLANK_STDDEV
 }
 
 /// Whether a header URL from the store API points at that app's images on a Steam image host.
@@ -259,6 +290,24 @@ mod tests {
         assert!(locate(cache, Source::Gog, "gog_1", "https://evil.example/abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/../abc.jpg").is_none());
         assert!(locate(cache, Source::Gog, "gog_1", "https://images.gog.com/a/b.jpg").is_none());
+    }
+
+    #[test]
+    fn spots_blank_placeholders() {
+        let jpeg = |image: image::RgbImage| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgb8(image).write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+            out.into_inner()
+        };
+        // Steam's placeholder: flat grey with a faint dot texture.
+        let grey = jpeg(image::RgbImage::from_fn(46, 21, |x, y| {
+            let v = if (x + y) % 2 == 0 { 76 } else { 78 };
+            image::Rgb([v, v, v])
+        }));
+        assert!(is_blank(&grey));
+        let art = jpeg(image::RgbImage::from_fn(46, 21, |x, _| image::Rgb([(x * 5) as u8, 40, 200 - (x * 4) as u8])));
+        assert!(!is_blank(&art));
+        assert!(!is_blank(b"not an image"), "undecodable images are left to the webview");
     }
 
     #[test]
